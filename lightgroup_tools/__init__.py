@@ -1,7 +1,7 @@
 bl_info = {
     "name": "David's Production Toolkit",
     "author": "David Carney",
-    "version": (0, 0, 6),
+    "version": (0, 0, 8),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroup Tools",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -24,8 +24,11 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
-        # Get preferences
-        prefs = context.preferences.addons[__name__.partition('.')[0]].preferences
+        # Get preferences safely
+        addon_name = __name__.partition('.')[0]
+        prefs = None
+        if addon_name in context.preferences.addons:
+            prefs = context.preferences.addons[addon_name].preferences
         
         layout.label(text="Setup:")
         layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
@@ -44,14 +47,15 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
         row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
         
         # Show update available message and download button
-        if prefs.update_downloaded:
-            box = layout.box()
-            box.label(text="Update ready!", icon='CHECKMARK')
-            box.label(text="Restart Blender to install", icon='INFO')
-        elif prefs.update_available:
-            box = layout.box()
-            box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
-            box.operator("lightgroup.download_update", icon='IMPORT')
+        if prefs:
+            if prefs.update_downloaded:
+                box = layout.box()
+                box.label(text="Update ready!", icon='CHECKMARK')
+                box.label(text="Restart Blender to install", icon='INFO')
+            elif prefs.update_available:
+                box = layout.box()
+                box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
+                box.operator("lightgroup.download_update", icon='IMPORT')
 
 class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
     """Main panel for Lightgroup Tools in Compositor"""
@@ -110,6 +114,7 @@ class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):
 
 
 classes = (
+    updater.LightgroupToolsPreferences,
     operators.LIGHTGROUP_OT_create_for_each_light,
     operators.LIGHTGROUP_OT_denoise_all_cycles,
     operators.LIGHTGROUP_OT_assign_to_lightgroup,
@@ -121,7 +126,6 @@ classes = (
 )
 
 def register():
-    updater.register_updater_properties()
     updater.register_handlers()
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -130,7 +134,6 @@ def unregister():
     for cls in classes:
         bpy.utils.unregister_class(cls)
     updater.unregister_handlers()
-    updater.unregister_updater_properties()
 
 if __name__ == "__main__":
     register()

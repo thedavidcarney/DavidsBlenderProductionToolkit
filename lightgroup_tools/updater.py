@@ -29,39 +29,70 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
         github_user = "thedavidcarney"
         github_repo = "DavidsBlenderProductionToolkit"
         
-         # Get current version from bl_info
+        print(f"Checking for updates from: {github_user}/{github_repo}")
+        
+        # Get current version from bl_info
         from . import bl_info
         current_version = bl_info["version"]
+        print(f"Current version: {current_version}")
+        
+        # Get preferences safely
+        addon_name = __name__.partition('.')[0]
+        if addon_name not in context.preferences.addons:
+            self.report({'ERROR'}, "Could not access addon preferences")
+            return {'CANCELLED'}
+        
+        prefs = context.preferences.addons[addon_name].preferences
         
         try:
             # Check GitHub API for latest release
             url = f"https://api.github.com/repos/{github_user}/{github_repo}/releases/latest"
+            print(f"Fetching: {url}")
+            
             with urllib.request.urlopen(url, timeout=10) as response:
                 data = json.loads(response.read().decode())
+            
+            print(f"Response received, tag: {data.get('tag_name', 'NOT FOUND')}")
                 
             latest_version_str = data["tag_name"].lstrip("v")
             latest_version = tuple(map(int, latest_version_str.split(".")))
             
+            print(f"Latest version: {latest_version}")
+            
             if latest_version > current_version:
                 message = f"New version available: v{latest_version_str} (current: v{'.'.join(map(str, current_version))})"
+                print(message)
                 self.report({'INFO'}, message)
                 
-                # Store update info in scene for the UI
-                context.scene.lightgroup_update_available = True
-                context.scene.lightgroup_latest_version = latest_version_str
-                context.scene.lightgroup_download_url = data["zipball_url"]
+                # Store update info in preferences (persists!)
+                prefs.update_available = True
+                prefs.latest_version = latest_version_str
+                prefs.download_url = data["zipball_url"]
                 
                 return {'FINISHED'}
             else:
-                self.report({'INFO'}, "You have the latest version!")
-                context.scene.lightgroup_update_available = False
+                message = "You have the latest version!"
+                print(message)
+                self.report({'INFO'}, message)
+                prefs.update_available = False
                 return {'FINISHED'}
                 
+        except urllib.error.HTTPError as e:
+            error_msg = f"HTTP error {e.code}: {e.reason}"
+            print(f"ERROR: {error_msg}")
+            self.report({'ERROR'}, f"Could not check for updates: {error_msg}")
+            return {'CANCELLED'}
         except urllib.error.URLError as e:
-            self.report({'ERROR'}, f"Could not check for updates: {e}")
+            error_msg = f"URL error: {e.reason}"
+            print(f"ERROR: {error_msg}")
+            self.report({'ERROR'}, f"Could not check for updates: {error_msg}")
             return {'CANCELLED'}
         except Exception as e:
+            error_msg = f"Unexpected error: {e}"
+            print(f"ERROR: {error_msg}")
             self.report({'ERROR'}, f"Error checking updates: {e}")
+            import traceback
+            traceback.print_exc()
             return {'CANCELLED'}
 
 
@@ -71,21 +102,34 @@ class LIGHTGROUP_OT_download_update(bpy.types.Operator):
     bl_label = "Download Update"
     
     def execute(self, context):
-        if not context.scene.lightgroup_update_available:
+        # Get preferences safely
+        addon_name = __name__.partition('.')[0]
+        if addon_name not in context.preferences.addons:
+            self.report({'ERROR'}, "Could not access addon preferences")
+            return {'CANCELLED'}
+        
+        prefs = context.preferences.addons[addon_name].preferences
+        
+        if not prefs.update_available:
             self.report({'WARNING'}, "No update available")
             return {'CANCELLED'}
         
-        download_url = context.scene.lightgroup_download_url
+        download_url = prefs.download_url
         
         try:
             self.report({'INFO'}, "Downloading update...")
             
-            # Download to temp location
-            temp_zip = os.path.join(bpy.app.tempdir, "lightgroup_tools_update.zip")
+            # Use a persistent location instead of temp
+            # Store in Blender's config directory
+            import tempfile
+            persistent_dir = os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_update")
+            os.makedirs(persistent_dir, exist_ok=True)
+            
+            temp_zip = os.path.join(persistent_dir, "update.zip")
             urllib.request.urlretrieve(download_url, temp_zip)
             
             # Extract
-            extract_dir = os.path.join(bpy.app.tempdir, "lightgroup_extract")
+            extract_dir = os.path.join(persistent_dir, "extracted")
             if os.path.exists(extract_dir):
                 shutil.rmtree(extract_dir)
             
@@ -105,32 +149,18 @@ class LIGHTGROUP_OT_download_update(bpy.types.Operator):
                 self.report({'ERROR'}, "Could not find addon folder in archive")
                 return {'CANCELLED'}
             
-            # Store the path for installation on restart
-            context.scene.lightgroup_staged_update_path = addon_source
-            context.scene.lightgroup_update_downloaded = True
+            # Store the path in preferences (persists!)
+            prefs.staged_update_path = addon_source
+            prefs.update_downloaded = True
             
             self.report({'INFO'}, "Update downloaded! Restart Blender to install.")
             return {'FINISHED'}
                     
         except Exception as e:
             self.report({'ERROR'}, f"Error downloading update: {e}")
+            import traceback
+            traceback.print_exc()
             return {'CANCELLED'}
-
-
-# Add properties to store update info
-def register_updater_properties():
-    bpy.types.Scene.lightgroup_update_available = bpy.props.BoolProperty(default=False)
-    bpy.types.Scene.lightgroup_latest_version = bpy.props.StringProperty(default="")
-    bpy.types.Scene.lightgroup_download_url = bpy.props.StringProperty(default="")
-    bpy.types.Scene.lightgroup_update_downloaded = bpy.props.BoolProperty(default=False)
-    bpy.types.Scene.lightgroup_staged_update_path = bpy.props.StringProperty(default="")
-
-def unregister_updater_properties():
-    del bpy.types.Scene.lightgroup_update_available
-    del bpy.types.Scene.lightgroup_latest_version
-    del bpy.types.Scene.lightgroup_download_url
-    del bpy.types.Scene.lightgroup_update_downloaded
-    del bpy.types.Scene.lightgroup_staged_update_path
 
 
 # Handler to install updates on startup
@@ -139,14 +169,19 @@ def install_update_on_load(dummy):
     """Check if there's a staged update to install on startup"""
     print("Lightgroup Tools: Checking for staged updates...")
     try:
-        scene = bpy.context.scene
+        # Get preferences
+        addon_name = __name__.partition('.')[0]
+        if addon_name not in bpy.context.preferences.addons:
+            print("Lightgroup Tools: Addon not in preferences yet")
+            return
+        
+        prefs = bpy.context.preferences.addons[addon_name].preferences
         
         # Debug info
-        has_downloaded = hasattr(scene, 'lightgroup_update_downloaded') and scene.lightgroup_update_downloaded
-        print(f"Lightgroup Tools: Update downloaded flag: {has_downloaded}")
+        print(f"Lightgroup Tools: Update downloaded flag: {prefs.update_downloaded}")
         
-        if has_downloaded:
-            staged_path = scene.lightgroup_staged_update_path
+        if prefs.update_downloaded:
+            staged_path = prefs.staged_update_path
             print(f"Lightgroup Tools: Staged path: {staged_path}")
             
             if os.path.exists(staged_path):
@@ -177,9 +212,10 @@ def install_update_on_load(dummy):
                     else:
                         shutil.copy2(s, d)
                 
-                # Clean up
-                scene.lightgroup_update_downloaded = False
-                scene.lightgroup_staged_update_path = ""
+                # Clean up flags in preferences
+                prefs.update_downloaded = False
+                prefs.staged_update_path = ""
+                prefs.update_available = False
                 
                 print("Lightgroup Tools: Update installed successfully!")
             else:

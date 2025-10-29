@@ -262,11 +262,32 @@ class LIGHTGROUP_OT_assign_to_lightgroup(bpy.types.Operator):
     bl_label = "Add Selected to Lightgroup"
     bl_options = {'REGISTER', 'UNDO'}
     
+    def get_lightgroup_items(self, context):
+        """Generate enum items from existing lightgroups"""
+        items = []
+        
+        # Add "New Lightgroup" option at the top
+        items.append(('NEW', 'New Lightgroup...', 'Create a new lightgroup'))
+        
+        # Get existing lightgroups from the active view layer
+        try:
+            lightgroups = context.view_layer.lightgroups
+            for lg in lightgroups:
+                items.append((lg.name, lg.name, f"Assign to {lg.name}"))
+        except Exception as e:
+            print(f"Error getting lightgroups: {e}")
+        
+        # Enum must have at least one item
+        if len(items) == 0:
+            items.append(('NONE', 'No Lightgroups', 'No lightgroups available'))
+        
+        return items
+    
     # Enum property for lightgroup selection
     lightgroup_enum: bpy.props.EnumProperty(
         name="Lightgroup",
         description="Select a lightgroup to assign objects to",
-        items=lambda self, context: self.get_lightgroup_items(context)
+        items=get_lightgroup_items
     )
     
     # String property for new lightgroup name
@@ -276,21 +297,6 @@ class LIGHTGROUP_OT_assign_to_lightgroup(bpy.types.Operator):
         default="Lightgroup"
     )
     
-    def get_lightgroup_items(self, context):
-        """Generate enum items from existing lightgroups"""
-        items = []
-        
-        # Add "New Lightgroup" option at the top
-        items.append(('NEW', 'New Lightgroup...', 'Create a new lightgroup'))
-        
-        # Get existing lightgroups
-        if hasattr(context.scene.view_layers, "active"):
-            lightgroups = context.scene.view_layers.active.lightgroups
-            for i, lg in enumerate(lightgroups):
-                items.append((lg.name, lg.name, f"Assign to {lg.name}"))
-        
-        return items if items else [('NONE', 'No Lightgroups', 'No lightgroups available')]
-    
     def invoke(self, context, event):
         """Show dialog when operator is invoked"""
         # Check if anything is selected
@@ -299,7 +305,7 @@ class LIGHTGROUP_OT_assign_to_lightgroup(bpy.types.Operator):
             return {'CANCELLED'}
         
         # Check if there are any lightgroups
-        lightgroups = context.scene.view_layers.active.lightgroups
+        lightgroups = context.view_layer.lightgroups
         if len(lightgroups) == 0:
             # No lightgroups exist, go straight to creating a new one
             return context.window_manager.invoke_props_dialog(self)
@@ -311,20 +317,22 @@ class LIGHTGROUP_OT_assign_to_lightgroup(bpy.types.Operator):
         """Draw the dialog UI"""
         layout = self.layout
         
-        lightgroups = context.scene.view_layers.active.lightgroups
+        lightgroups = context.view_layer.lightgroups
         
         if len(lightgroups) == 0:
             # No lightgroups - just show name input
             layout.label(text="No lightgroups exist. Create one:")
-            layout.prop(self, "new_lightgroup_name")
+            layout.prop(self, "new_lightgroup_name", text="Name")
         else:
-            # Show dropdown
-            layout.prop(self, "lightgroup_enum")
+            # Show dropdown with all options including "New Lightgroup..."
+            layout.label(text="Select Lightgroup:")
+            layout.prop(self, "lightgroup_enum", text="")
             
             # If "New Lightgroup" is selected, show name input
             if self.lightgroup_enum == 'NEW':
                 layout.separator()
-                layout.prop(self, "new_lightgroup_name")
+                layout.label(text="Create New:")
+                layout.prop(self, "new_lightgroup_name", text="Name")
     
     def execute(self, context):
         """Execute the assignment"""
@@ -335,7 +343,7 @@ class LIGHTGROUP_OT_assign_to_lightgroup(bpy.types.Operator):
             return {'CANCELLED'}
         
         # Determine which lightgroup to use
-        lightgroups = context.scene.view_layers.active.lightgroups
+        lightgroups = context.view_layer.lightgroups
         target_lightgroup = None
         
         if len(lightgroups) == 0 or self.lightgroup_enum == 'NEW':
