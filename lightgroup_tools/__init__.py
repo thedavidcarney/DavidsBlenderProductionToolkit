@@ -1,7 +1,7 @@
 bl_info = {
     "name": "David's Production Toolkit",
     "author": "David Carney",
-    "version": (0, 0, 1),
+    "version": (0, 0, 2),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroup Tools",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -13,7 +13,7 @@ from . import operators
 from . import updater
 
 class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
-    """Main panel for Lightgroup Tools"""
+    """Main panel for Lightgroup Tools in 3D Viewport"""
     bl_label = "Lightgroup Tools"
     bl_idname = "LIGHTGROUP_PT_main_panel"
     bl_space_type = 'VIEW_3D'
