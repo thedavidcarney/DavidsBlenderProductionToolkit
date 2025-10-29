@@ -1,7 +1,7 @@
 bl_info = {
     "name": "David's Production Toolkit",
     "author": "David Carney",
-    "version": (0, 0, 8),
+    "version": (0, 1, 0),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroup Tools",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -31,7 +31,7 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
             prefs = context.preferences.addons[addon_name].preferences
         
         layout.label(text="Setup:")
-        layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
+        layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Every Light")
         layout.operator("lightgroup.assign_to_lightgroup", icon='LINKED', text="Add Selected to Lightgroup")
         
         layout.separator()
