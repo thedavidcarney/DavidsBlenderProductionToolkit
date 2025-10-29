@@ -1,7 +1,7 @@
 bl_info = {
     "name": "David's Production Toolkit",
     "author": "David Carney",
-    "version": (0, 0, 4),
+    "version": (0, 0, 5),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroup Tools",
     "description": "Tools for managing lightgroups and compositor setup",
