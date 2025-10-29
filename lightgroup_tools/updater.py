@@ -105,80 +105,6 @@ class LIGHTGROUP_OT_download_update(bpy.types.Operator):
             return {'CANCELLED'}
 
 
-class LIGHTGROUP_OT_install_update(bpy.types.Operator):
-    """Install the downloaded update (will uninstall and reinstall the addon)"""
-    bl_idname = "lightgroup.install_update"
-    bl_label = "Install Update Now"
-    
-    def execute(self, context):
-        if not context.scene.lightgroup_update_downloaded:
-            self.report({'WARNING'}, "No update downloaded")
-            return {'CANCELLED'}
-        
-        staged_path = context.scene.lightgroup_staged_update_path
-        
-        if not os.path.exists(staged_path):
-            self.report({'ERROR'}, "Staged update path not found")
-            return {'CANCELLED'}
-        
-        try:
-            # Get the current addon directory
-            addon_dir = os.path.dirname(os.path.realpath(__file__))
-            parent_dir = os.path.dirname(addon_dir)
-            addon_folder_name = os.path.basename(addon_dir)
-            
-            # Create a backup
-            backup_dir = addon_dir + "_backup"
-            if os.path.exists(backup_dir):
-                shutil.rmtree(backup_dir)
-            shutil.copytree(addon_dir, backup_dir)
-            
-            # Try to remove old addon files
-            try:
-                # Remove all files except __pycache__
-                for item in os.listdir(addon_dir):
-                    if item == "__pycache__":
-                        continue
-                    item_path = os.path.join(addon_dir, item)
-                    if os.path.isfile(item_path):
-                        os.remove(item_path)
-                    elif os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                
-                # Copy new files
-                for item in os.listdir(staged_path):
-                    s = os.path.join(staged_path, item)
-                    d = os.path.join(addon_dir, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d)
-                    else:
-                        shutil.copy2(s, d)
-                
-                # Clean up
-                context.scene.lightgroup_update_downloaded = False
-                context.scene.lightgroup_staged_update_path = ""
-                context.scene.lightgroup_update_available = False
-                
-                # Remove backup if successful
-                if os.path.exists(backup_dir):
-                    shutil.rmtree(backup_dir)
-                
-                self.report({'INFO'}, "Update installed! Please save your work and restart Blender.")
-                return {'FINISHED'}
-                
-            except PermissionError as e:
-                # Restore backup if something went wrong
-                if os.path.exists(backup_dir):
-                    shutil.rmtree(addon_dir)
-                    shutil.copytree(backup_dir, addon_dir)
-                self.report({'ERROR'}, f"Could not install update: {e}. Please restart Blender and try again.")
-                return {'CANCELLED'}
-                
-        except Exception as e:
-            self.report({'ERROR'}, f"Error installing update: {e}")
-            return {'CANCELLED'}
-
-
 # Add properties to store update info
 def register_updater_properties():
     bpy.types.Scene.lightgroup_update_available = bpy.props.BoolProperty(default=False)
@@ -199,10 +125,41 @@ def unregister_updater_properties():
 @bpy.app.handlers.persistent
 def install_update_on_load(dummy):
     """Check if there's a staged update to install on startup"""
-    scene = bpy.context.scene
-    if hasattr(scene, 'lightgroup_update_downloaded') and scene.lightgroup_update_downloaded:
-        # Trigger the install operator
-        bpy.ops.lightgroup.install_update()
+    try:
+        scene = bpy.context.scene
+        if hasattr(scene, 'lightgroup_update_downloaded') and scene.lightgroup_update_downloaded:
+            staged_path = scene.lightgroup_staged_update_path
+            
+            if os.path.exists(staged_path):
+                # Get the current addon directory
+                addon_dir = os.path.dirname(os.path.realpath(__file__))
+                
+                # Copy new files over
+                for item in os.listdir(staged_path):
+                    if item == "__pycache__":
+                        continue
+                    
+                    s = os.path.join(staged_path, item)
+                    d = os.path.join(addon_dir, item)
+                    
+                    if os.path.exists(d):
+                        if os.path.isdir(d):
+                            shutil.rmtree(d)
+                        else:
+                            os.remove(d)
+                    
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d)
+                    else:
+                        shutil.copy2(s, d)
+                
+                # Clean up
+                scene.lightgroup_update_downloaded = False
+                scene.lightgroup_staged_update_path = ""
+                
+                print("Lightgroup Tools: Update installed successfully!")
+    except Exception as e:
+        print(f"Lightgroup Tools: Error installing update: {e}")
 
 
 def register_handlers():
