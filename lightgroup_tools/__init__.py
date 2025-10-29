@@ -1,12 +1,13 @@
 bl_info = {
     "name": "David's Production Toolkit",
     "author": "David Carney",
-    "version": (0, 0, 5),
+    "version": (0, 0, 6),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroup Tools",
     "description": "Tools for managing lightgroups and compositor setup",
     "category": "Lighting",
 }
+
 
 import bpy
 from . import operators
@@ -22,6 +23,9 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+        
+        # Get preferences
+        prefs = context.preferences.addons[__name__.partition('.')[0]].preferences
         
         layout.label(text="Setup:")
         layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
@@ -40,13 +44,13 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
         row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
         
         # Show update available message and download button
-        if hasattr(context.scene, 'lightgroup_update_downloaded') and context.scene.lightgroup_update_downloaded:
+        if prefs.update_downloaded:
             box = layout.box()
             box.label(text="Update ready!", icon='CHECKMARK')
             box.label(text="Restart Blender to install", icon='INFO')
-        elif context.scene.lightgroup_update_available:
+        elif prefs.update_available:
             box = layout.box()
-            box.label(text=f"Update available: v{context.scene.lightgroup_latest_version}", icon='INFO')
+            box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
             box.operator("lightgroup.download_update", icon='IMPORT')
 
 class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
@@ -108,6 +112,7 @@ class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):
 classes = (
     operators.LIGHTGROUP_OT_create_for_each_light,
     operators.LIGHTGROUP_OT_denoise_all_cycles,
+    operators.LIGHTGROUP_OT_assign_to_lightgroup,
     updater.LIGHTGROUP_OT_check_updates,
     updater.LIGHTGROUP_OT_download_update,
     LIGHTGROUP_PT_main_panel,

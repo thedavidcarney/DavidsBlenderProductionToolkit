@@ -7,6 +7,18 @@ import os
 import shutil
 from pathlib import Path
 
+
+# Preferences to store update info (persists across sessions)
+class LightgroupToolsPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__.partition('.')[0]
+    
+    update_available: bpy.props.BoolProperty(default=False)
+    latest_version: bpy.props.StringProperty(default="")
+    download_url: bpy.props.StringProperty(default="")
+    update_downloaded: bpy.props.BoolProperty(default=False)
+    staged_update_path: bpy.props.StringProperty(default="")
+
+
 class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
     """Check for add-on updates on GitHub"""
     bl_idname = "lightgroup.check_updates"
@@ -17,7 +29,7 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
         github_user = "thedavidcarney"
         github_repo = "DavidsBlenderProductionToolkit"
         
-        # Get current version from bl_info
+         # Get current version from bl_info
         from . import bl_info
         current_version = bl_info["version"]
         
@@ -125,14 +137,24 @@ def unregister_updater_properties():
 @bpy.app.handlers.persistent
 def install_update_on_load(dummy):
     """Check if there's a staged update to install on startup"""
+    print("Lightgroup Tools: Checking for staged updates...")
     try:
         scene = bpy.context.scene
-        if hasattr(scene, 'lightgroup_update_downloaded') and scene.lightgroup_update_downloaded:
+        
+        # Debug info
+        has_downloaded = hasattr(scene, 'lightgroup_update_downloaded') and scene.lightgroup_update_downloaded
+        print(f"Lightgroup Tools: Update downloaded flag: {has_downloaded}")
+        
+        if has_downloaded:
             staged_path = scene.lightgroup_staged_update_path
+            print(f"Lightgroup Tools: Staged path: {staged_path}")
             
             if os.path.exists(staged_path):
+                print(f"Lightgroup Tools: Staged path exists, installing...")
+                
                 # Get the current addon directory
                 addon_dir = os.path.dirname(os.path.realpath(__file__))
+                print(f"Lightgroup Tools: Installing to: {addon_dir}")
                 
                 # Copy new files over
                 for item in os.listdir(staged_path):
@@ -141,6 +163,8 @@ def install_update_on_load(dummy):
                     
                     s = os.path.join(staged_path, item)
                     d = os.path.join(addon_dir, item)
+                    
+                    print(f"Lightgroup Tools: Copying {item}...")
                     
                     if os.path.exists(d):
                         if os.path.isdir(d):
@@ -158,8 +182,14 @@ def install_update_on_load(dummy):
                 scene.lightgroup_staged_update_path = ""
                 
                 print("Lightgroup Tools: Update installed successfully!")
+            else:
+                print(f"Lightgroup Tools: Staged path does not exist: {staged_path}")
+        else:
+            print("Lightgroup Tools: No update to install")
     except Exception as e:
         print(f"Lightgroup Tools: Error installing update: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def register_handlers():
