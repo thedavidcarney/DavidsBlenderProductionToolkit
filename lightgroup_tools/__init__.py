@@ -1,7 +1,7 @@
 bl_info = {
     "name": "David's Production Toolkit",
     "author": "David Carney",
-    "version": (0, 0, 3),
+    "version": (0, 0, 4),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroup Tools",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -25,6 +25,7 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
         
         layout.label(text="Setup:")
         layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
+        layout.operator("lightgroup.assign_to_lightgroup", icon='LINKED', text="Add Selected to Lightgroup")
         
         layout.separator()
         
@@ -80,13 +81,14 @@ class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
         row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
         
         # Show update available message and download button
-        if context.scene.lightgroup_update_available:
+        if hasattr(context.scene, 'lightgroup_update_downloaded') and context.scene.lightgroup_update_downloaded:
+            box = layout.box()
+            box.label(text="Update ready!", icon='CHECKMARK')
+            box.label(text="Restart Blender to install", icon='INFO')
+        elif context.scene.lightgroup_update_available:
             box = layout.box()
             box.label(text=f"Update available: v{context.scene.lightgroup_latest_version}", icon='INFO')
-            box.operator("lightgroup.download_update", icon='IMPORT', text="Download & Install")
-        elif hasattr(context.scene, 'lightgroup_update_downloaded') and context.scene.lightgroup_update_downloaded:
-            box = layout.box()
-            box.label(text="Update ready - restart Blender", icon='ERROR')
+            box.operator("lightgroup.download_update", icon='IMPORT')
 
 
 class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):

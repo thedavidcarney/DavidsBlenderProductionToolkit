@@ -260,3 +260,127 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
         
         self.report({'INFO'}, "Compositor setup complete")
         return {'FINISHED'}
+
+
+class LIGHTGROUP_OT_assign_to_lightgroup(bpy.types.Operator):
+    """Assign selected objects and lights to a lightgroup"""
+    bl_idname = "lightgroup.assign_to_lightgroup"
+    bl_label = "Add Selected to Lightgroup"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    # Enum property for lightgroup selection
+    lightgroup_enum: bpy.props.EnumProperty(
+        name="Lightgroup",
+        description="Select a lightgroup to assign objects to",
+        items=lambda self, context: self.get_lightgroup_items(context)
+    )
+    
+    # String property for new lightgroup name
+    new_lightgroup_name: bpy.props.StringProperty(
+        name="New Lightgroup Name",
+        description="Name for the new lightgroup",
+        default="Lightgroup"
+    )
+    
+    def get_lightgroup_items(self, context):
+        """Generate enum items from existing lightgroups"""
+        items = []
+        
+        # Add "New Lightgroup" option at the top
+        items.append(('NEW', 'New Lightgroup...', 'Create a new lightgroup'))
+        
+        # Get existing lightgroups
+        if hasattr(context.scene.view_layers, "active"):
+            lightgroups = context.scene.view_layers.active.lightgroups
+            for i, lg in enumerate(lightgroups):
+                items.append((lg.name, lg.name, f"Assign to {lg.name}"))
+        
+        return items if items else [('NONE', 'No Lightgroups', 'No lightgroups available')]
+    
+    def invoke(self, context, event):
+        """Show dialog when operator is invoked"""
+        # Check if anything is selected
+        if not context.selected_objects:
+            self.report({'WARNING'}, "No objects selected")
+            return {'CANCELLED'}
+        
+        # Check if there are any lightgroups
+        lightgroups = context.scene.view_layers.active.lightgroups
+        if len(lightgroups) == 0:
+            # No lightgroups exist, go straight to creating a new one
+            return context.window_manager.invoke_props_dialog(self)
+        
+        # Show the dropdown dialog
+        return context.window_manager.invoke_props_dialog(self)
+    
+    def draw(self, context):
+        """Draw the dialog UI"""
+        layout = self.layout
+        
+        lightgroups = context.scene.view_layers.active.lightgroups
+        
+        if len(lightgroups) == 0:
+            # No lightgroups - just show name input
+            layout.label(text="No lightgroups exist. Create one:")
+            layout.prop(self, "new_lightgroup_name")
+        else:
+            # Show dropdown
+            layout.prop(self, "lightgroup_enum")
+            
+            # If "New Lightgroup" is selected, show name input
+            if self.lightgroup_enum == 'NEW':
+                layout.separator()
+                layout.prop(self, "new_lightgroup_name")
+    
+    def execute(self, context):
+        """Execute the assignment"""
+        selected_objects = context.selected_objects
+        
+        if not selected_objects:
+            self.report({'WARNING'}, "No objects selected")
+            return {'CANCELLED'}
+        
+        # Determine which lightgroup to use
+        lightgroups = context.scene.view_layers.active.lightgroups
+        target_lightgroup = None
+        
+        if len(lightgroups) == 0 or self.lightgroup_enum == 'NEW':
+            # Create new lightgroup
+            lightgroup_name = self.new_lightgroup_name.strip()
+            if not lightgroup_name:
+                self.report({'ERROR'}, "Lightgroup name cannot be empty")
+                return {'CANCELLED'}
+            
+            # Replace periods with underscores for consistency
+            lightgroup_name = lightgroup_name.replace(".", "_")
+            
+            bpy.ops.scene.view_layer_add_lightgroup(name=lightgroup_name)
+            target_lightgroup = lightgroup_name
+            self.report({'INFO'}, f"Created new lightgroup: {lightgroup_name}")
+        else:
+            target_lightgroup = self.lightgroup_enum
+        
+        # Assign selected objects to the lightgroup
+        assigned_count = 0
+        skipped_count = 0
+        
+        for obj in selected_objects:
+            try:
+                # Check if object can have a lightgroup assigned
+                if hasattr(obj, 'lightgroup'):
+                    obj.lightgroup = target_lightgroup
+                    assigned_count += 1
+                else:
+                    skipped_count += 1
+            except Exception as e:
+                print(f"Could not assign {obj.name} to lightgroup: {e}")
+                skipped_count += 1
+        
+        # Report results
+        if assigned_count > 0:
+            self.report({'INFO'}, f"Assigned {assigned_count} object(s) to '{target_lightgroup}'")
+        
+        if skipped_count > 0:
+            self.report({'WARNING'}, f"Skipped {skipped_count} object(s) that cannot be assigned to lightgroups")
+        
+        return {'FINISHED'}
