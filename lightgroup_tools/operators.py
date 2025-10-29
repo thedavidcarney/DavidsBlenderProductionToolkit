@@ -21,11 +21,8 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
             # Create a new light group in the view layer tab
             bpy.ops.scene.view_layer_add_lightgroup(name=newName)
             
-            # Make current light in list active object
-            context.view_layer.objects.active = bpy.data.objects[light.name]
-            
-            # Assign the light to the new group in the shading tab
-            context.object.lightgroup = newName
+            # Assign the light to the new group directly
+            light.lightgroup = newName
             
             # Increment our light group counter and add name to the list
             lightGroupsAmount += 1
@@ -123,11 +120,8 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
             # Create a new light group in the view layer tab
             bpy.ops.scene.view_layer_add_lightgroup(name=newName)
             
-            # Make current object in list active object
-            context.view_layer.objects.active = bpy.data.objects[emissive_object.name]
-            
-            # Assign the object to the new group in the shading tab
-            context.object.lightgroup = newName
+            # Assign the object to the new group directly
+            emissive_object.lightgroup = newName
             
             # Increment our light group counter and add name to the list
             lightGroupsAmount += 1
