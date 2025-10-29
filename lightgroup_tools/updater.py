@@ -69,12 +69,19 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
                 prefs.latest_version = latest_version_str
                 prefs.download_url = data["zipball_url"]
                 
+                # Save preferences to disk
+                bpy.ops.wm.save_userpref()
+                
                 return {'FINISHED'}
             else:
                 message = "You have the latest version!"
                 print(message)
                 self.report({'INFO'}, message)
                 prefs.update_available = False
+                
+                # Save preferences to disk
+                bpy.ops.wm.save_userpref()
+                
                 return {'FINISHED'}
                 
         except urllib.error.HTTPError as e:
@@ -153,6 +160,9 @@ class LIGHTGROUP_OT_download_update(bpy.types.Operator):
             prefs.staged_update_path = addon_source
             prefs.update_downloaded = True
             
+            # CRITICAL: Save preferences to disk so they persist!
+            bpy.ops.wm.save_userpref()
+            
             self.report({'INFO'}, "Update downloaded! Restart Blender to install.")
             return {'FINISHED'}
                     
@@ -216,6 +226,9 @@ def install_update_on_load(dummy):
                 prefs.update_downloaded = False
                 prefs.staged_update_path = ""
                 prefs.update_available = False
+                
+                # Save preferences after cleanup
+                bpy.ops.wm.save_userpref()
                 
                 print("Lightgroup Tools: Update installed successfully!")
             else:
