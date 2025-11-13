@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Lightgroup Tools",
-    "author": "Your Name",
-    "version": (1, 0, 1),
+    "author": "David Carney",
+    "version": (1, 0, 2),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroups",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -72,6 +72,12 @@ class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
+        # Get preferences safely
+        addon_name = __name__.partition('.')[0]
+        prefs = None
+        if addon_name in context.preferences.addons:
+            prefs = context.preferences.addons[addon_name].preferences
+        
         layout.label(text="Setup:")
         layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
         
@@ -88,14 +94,15 @@ class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
         row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
         
         # Show update available message and download button
-        if hasattr(context.scene, 'lightgroup_update_downloaded') and context.scene.lightgroup_update_downloaded:
-            box = layout.box()
-            box.label(text="Update ready!", icon='CHECKMARK')
-            box.label(text="Restart Blender to install", icon='INFO')
-        elif context.scene.lightgroup_update_available:
-            box = layout.box()
-            box.label(text=f"Update available: v{context.scene.lightgroup_latest_version}", icon='INFO')
-            box.operator("lightgroup.download_update", icon='IMPORT')
+        if prefs:
+            if prefs.update_downloaded:
+                box = layout.box()
+                box.label(text="Update ready!", icon='CHECKMARK')
+                box.label(text="Restart Blender to install", icon='INFO')
+            elif prefs.update_available:
+                box = layout.box()
+                box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
+                box.operator("lightgroup.download_update", icon='IMPORT')
 
 
 class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):
