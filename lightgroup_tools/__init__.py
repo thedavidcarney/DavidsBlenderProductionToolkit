@@ -1,13 +1,12 @@
 bl_info = {
-    "name": "David's Production Toolkit",
-    "author": "David Carney",
-    "version": (0, 1, 0),
+    "name": "Lightgroup Tools",
+    "author": "Your Name",
+    "version": (1, 0, 0),
     "blender": (4, 5, 0),
-    "location": "View3D > Sidebar > Lightgroup Tools",
+    "location": "View3D > Sidebar > Lightgroups",
     "description": "Tools for managing lightgroups and compositor setup",
     "category": "Lighting",
 }
-
 
 import bpy
 from . import operators
@@ -31,7 +30,7 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
             prefs = context.preferences.addons[addon_name].preferences
         
         layout.label(text="Setup:")
-        layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Every Light")
+        layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
         layout.operator("lightgroup.assign_to_lightgroup", icon='LINKED', text="Add Selected to Lightgroup")
         
         layout.separator()
@@ -110,11 +109,13 @@ class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
+        layout.operator("lightgroup.clear_all_lightgroups", icon='X', text="Clear All Lightgroups")
         layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
 
 
 classes = (
     updater.LightgroupToolsPreferences,
+    operators.LIGHTGROUP_OT_clear_all_lightgroups,
     operators.LIGHTGROUP_OT_create_for_each_light,
     operators.LIGHTGROUP_OT_denoise_all_cycles,
     operators.LIGHTGROUP_OT_assign_to_lightgroup,

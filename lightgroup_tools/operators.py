@@ -1,5 +1,27 @@
 import bpy
 
+class LIGHTGROUP_OT_clear_all_lightgroups(bpy.types.Operator):
+    """Delete all lightgroups from the current view layer"""
+    bl_idname = "lightgroup.clear_all_lightgroups"
+    bl_label = "Clear All Lightgroups"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        lightgroups = context.view_layer.lightgroups
+        lightgroup_count = len(lightgroups)
+        
+        if lightgroup_count == 0:
+            self.report({'INFO'}, "No lightgroups to clear")
+            return {'FINISHED'}
+        
+        # Remove all lightgroups (iterate backwards to avoid index issues)
+        for i in range(lightgroup_count - 1, -1, -1):
+            lightgroups.remove(lightgroups[i])
+        
+        self.report({'INFO'}, f"Cleared {lightgroup_count} lightgroup(s)")
+        return {'FINISHED'}
+
+
 class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
     """Create a lightgroup for each light, world, and emissive object"""
     bl_idname = "lightgroup.create_for_each_light"
