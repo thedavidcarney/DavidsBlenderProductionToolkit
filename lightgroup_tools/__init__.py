@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Lightgroup Tools",
     "author": "Your Name",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Lightgroups",
     "description": "Tools for managing lightgroups and compositor setup",

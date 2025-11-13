@@ -231,6 +231,17 @@ def install_update_on_load(dummy):
                 bpy.ops.wm.save_userpref()
                 
                 print("Lightgroup Tools: Update installed successfully!")
+                print("Lightgroup Tools: Reloading add-on...")
+                
+                # Reload the add-on to use the new code
+                addon_name = __name__.partition('.')[0]
+                try:
+                    bpy.ops.preferences.addon_disable(module=addon_name)
+                    bpy.ops.preferences.addon_enable(module=addon_name)
+                    print("Lightgroup Tools: Add-on reloaded with new version!")
+                except Exception as reload_error:
+                    print(f"Lightgroup Tools: Could not reload add-on: {reload_error}")
+                    print("Lightgroup Tools: Please restart Blender one more time to use the new version.")
             else:
                 print(f"Lightgroup Tools: Staged path does not exist: {staged_path}")
         else:
