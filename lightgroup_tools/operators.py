@@ -180,9 +180,18 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
             
         print(lightGroupsNames)
         # Make sure compositor nodes are on
-        context.scene.use_nodes = True
+        scene = context.scene
+        scene.use_nodes = True
         context.view_layer.cycles.denoising_store_passes = True
-        tree = context.scene.node_tree
+        
+        # Handle both Blender 4.5 and 5.0
+        if hasattr(scene, 'compositing_node_group'):
+            # Blender 5.0+
+            tree = scene.compositing_node_group
+        else:
+            # Blender 4.5 and earlier
+            tree = scene.node_tree
+        
         # Clear all previous nodes so we can control where they are
         for node in tree.nodes:
             tree.nodes.remove(node)
