@@ -1,8 +1,8 @@
 bl_info = {
     "name": "Lightgroup Tools",
     "author": "David Carney",
-    "version": (1, 0, 4),
-    "blender": (4, 5, 0),
+    "version": (1, 0, 9),
+    "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Lightgroups",
     "description": "Tools for managing lightgroups and compositor setup",
     "category": "Lighting",

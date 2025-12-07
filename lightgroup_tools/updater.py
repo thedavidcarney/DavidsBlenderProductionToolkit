@@ -180,7 +180,7 @@ def install_update_on_load(dummy):
     print("Lightgroup Tools: Checking for staged updates...")
     try:
         # Get preferences
-        addon_name = __name__.partition('.')[0]
+        addon_name = "lightgroup_tools"  # Use the actual addon name directly
         if addon_name not in bpy.context.preferences.addons:
             print("Lightgroup Tools: Addon not in preferences yet")
             return
@@ -234,7 +234,6 @@ def install_update_on_load(dummy):
                 print("Lightgroup Tools: Reloading add-on...")
                 
                 # Reload the add-on to use the new code
-                addon_name = __name__.partition('.')[0]
                 try:
                     bpy.ops.preferences.addon_disable(module=addon_name)
                     bpy.ops.preferences.addon_enable(module=addon_name)
@@ -253,9 +252,14 @@ def install_update_on_load(dummy):
 
 
 def register_handlers():
+    # Register for both load_post (loading a file) and load_factory_startup_post (fresh start)
     if install_update_on_load not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(install_update_on_load)
+    if install_update_on_load not in bpy.app.handlers.load_factory_startup_post:
+        bpy.app.handlers.load_factory_startup_post.append(install_update_on_load)
 
 def unregister_handlers():
     if install_update_on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(install_update_on_load)
+    if install_update_on_load in bpy.app.handlers.load_factory_startup_post:
+        bpy.app.handlers.load_factory_startup_post.remove(install_update_on_load)

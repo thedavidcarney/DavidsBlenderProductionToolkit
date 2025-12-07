@@ -179,18 +179,31 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
             i += 1
             
         print(lightGroupsNames)
+        
         # Make sure compositor nodes are on
         scene = context.scene
-        scene.use_nodes = True
         context.view_layer.cycles.denoising_store_passes = True
         
         # Handle both Blender 4.5 and 5.0
+        tree = None
         if hasattr(scene, 'compositing_node_group'):
             # Blender 5.0+
             tree = scene.compositing_node_group
+            
+            # If no tree exists, create one
+            if tree is None:
+                tree = bpy.data.node_groups.new(name="Compositor", type='CompositorNodeTree')
+                scene.compositing_node_group = tree
+                print("Created new compositor tree for Blender 5.0")
         else:
             # Blender 4.5 and earlier
+            scene.use_nodes = True
             tree = scene.node_tree
+        
+        # Final safety check
+        if tree is None:
+            self.report({'ERROR'}, "Could not access or create compositor node tree")
+            return {'CANCELLED'}
         
         # Clear all previous nodes so we can control where they are
         for node in tree.nodes:
@@ -219,9 +232,24 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
         
         # Create Output Node
         outputNode = tree.nodes.new(type='CompositorNodeOutputFile')
-        outputNode.base_path = "//../../04_Renders/01_Components/{blend_name}_"
+        # Handle both Blender 4.5 and 5.0 attribute names
+        if hasattr(outputNode, 'base_path'):
+            # Blender 4.5 and earlier
+            outputNode.base_path = "//../../04_Renders/01_Components/{blend_name}_"
+        else:
+            # Blender 5.0+ uses directory and file_name separately
+            outputNode.directory = "//../../04_Renders/01_Components/"
+            outputNode.file_name = "{blend_name}_"
         outputNode.location = 1000, -250
         outputNode.width = 500
+        
+        # Configure EXR format settings
+        outputNode.format.file_format = 'OPEN_EXR_MULTILAYER'
+        outputNode.format.color_depth = '16'  # Float (half)
+        outputNode.format.exr_codec = 'DWAB'
+        outputNode.format.quality = 15  # Quality 15%
+        outputNode.format.color_management = 'OVERRIDE'
+        outputNode.format.linear_colorspace_settings.name = 'Filmic sRGB'
         
         # Track which outputs we've already used
         usedOutputs = set()
@@ -253,11 +281,18 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
                 links.new(denoisingAlbedoOutput, denoiseNode.inputs[2])
                 
                 # link the denoiser to file output
-                if slotIndex == 0:
-                    outputNode.layer_slots[0].name = lightGroupsNames[i]
-                    links.new(denoiseNode.outputs[0], outputNode.inputs[slotIndex])
+                # Handle both Blender 4.5 and 5.0 slot naming
+                if hasattr(outputNode, 'layer_slots'):
+                    # Blender 4.5 and earlier
+                    if slotIndex == 0:
+                        outputNode.layer_slots[0].name = lightGroupsNames[i]
+                        links.new(denoiseNode.outputs[0], outputNode.inputs[slotIndex])
+                    else:
+                        outputNode.layer_slots.new(lightGroupsNames[i])
+                        links.new(denoiseNode.outputs[0], outputNode.inputs[slotIndex])
                 else:
-                    outputNode.layer_slots.new(lightGroupsNames[i])
+                    # Blender 5.0+ uses file_output_items (requires socket type and name)
+                    outputNode.file_output_items.new('RGBA', name=lightGroupsNames[i])
                     links.new(denoiseNode.outputs[0], outputNode.inputs[slotIndex])
                 
                 slotIndex += 1
@@ -273,11 +308,18 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
                 continue
             
             # Add this pass to the file output
-            if slotIndex == 0:
-                outputNode.layer_slots[0].name = output.name
-                links.new(output, outputNode.inputs[slotIndex])
+            # Handle both Blender 4.5 and 5.0 slot naming
+            if hasattr(outputNode, 'layer_slots'):
+                # Blender 4.5 and earlier
+                if slotIndex == 0:
+                    outputNode.layer_slots[0].name = output.name
+                    links.new(output, outputNode.inputs[slotIndex])
+                else:
+                    outputNode.layer_slots.new(output.name)
+                    links.new(output, outputNode.inputs[slotIndex])
             else:
-                outputNode.layer_slots.new(output.name)
+                # Blender 5.0+ uses file_output_items (requires socket type and name)
+                outputNode.file_output_items.new('RGBA', name=output.name)
                 links.new(output, outputNode.inputs[slotIndex])
             
             slotIndex += 1
