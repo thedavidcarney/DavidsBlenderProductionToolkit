@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Lightgroup Tools",
     "author": "David Carney",
-    "version": (1, 0, 11),
+    "version": (1, 0, 12),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Lightgroups",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -40,12 +40,22 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
         layout.operator("lightgroup.denoise_all_cycles", icon='NODE_COMPOSITING')
         
         layout.separator()
-        
+
         # Update section
         layout.label(text="Updates:")
+
+        if prefs:
+            # Sticky restart-required notice from a recent in-session install
+            if prefs.update_just_installed:
+                box = layout.box()
+                version_label = f"Update v{prefs.last_installed_version} installed" if prefs.last_installed_version else "Update installed"
+                box.label(text=version_label, icon='CHECKMARK')
+                box.label(text="Restart Blender for full effect", icon='INFO')
+                box.operator("lightgroup.dismiss_install_notice", icon='X')
+
         row = layout.row()
         row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
-        
+
         # Show update available message and download button
         if prefs:
             if prefs.update_downloaded:
@@ -56,6 +66,12 @@ class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
                 box = layout.box()
                 box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
                 box.operator("lightgroup.download_update", icon='IMPORT')
+
+            # Rollback to the backup of the previous version
+            if prefs.backup_available:
+                row = layout.row()
+                restore_text = f"Restore Previous Version (v{prefs.backup_version})" if prefs.backup_version else "Restore Previous Version"
+                row.operator("lightgroup.restore_backup", icon='RECOVER_LAST', text=restore_text)
 
 class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
     """Main panel for Lightgroup Tools in Compositor"""
@@ -88,12 +104,22 @@ class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
         layout.operator("lightgroup.denoise_all_cycles", icon='NODE_COMPOSITING')
         
         layout.separator()
-        
+
         # Update section
         layout.label(text="Updates:")
+
+        if prefs:
+            # Sticky restart-required notice from a recent in-session install
+            if prefs.update_just_installed:
+                box = layout.box()
+                version_label = f"Update v{prefs.last_installed_version} installed" if prefs.last_installed_version else "Update installed"
+                box.label(text=version_label, icon='CHECKMARK')
+                box.label(text="Restart Blender for full effect", icon='INFO')
+                box.operator("lightgroup.dismiss_install_notice", icon='X')
+
         row = layout.row()
         row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
-        
+
         # Show update available message and download button
         if prefs:
             if prefs.update_downloaded:
@@ -104,6 +130,12 @@ class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
                 box = layout.box()
                 box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
                 box.operator("lightgroup.download_update", icon='IMPORT')
+
+            # Rollback to the backup of the previous version
+            if prefs.backup_available:
+                row = layout.row()
+                restore_text = f"Restore Previous Version (v{prefs.backup_version})" if prefs.backup_version else "Restore Previous Version"
+                row.operator("lightgroup.restore_backup", icon='RECOVER_LAST', text=restore_text)
 
 
 class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):
@@ -129,6 +161,8 @@ classes = (
     operators.LIGHTGROUP_OT_assign_to_lightgroup,
     updater.LIGHTGROUP_OT_check_updates,
     updater.LIGHTGROUP_OT_download_update,
+    updater.LIGHTGROUP_OT_restore_backup,
+    updater.LIGHTGROUP_OT_dismiss_install_notice,
     LIGHTGROUP_PT_main_panel,
     LIGHTGROUP_PT_compositor_panel,
     LIGHTGROUP_PT_viewlayer_panel,

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tail -c 60000 /c/Users/User/Downloads/chat0_stripped.txt)",
+      "Read(//tmp/**)",
+      "PowerShell(Compress-Archive -Path lightgroup_tools -DestinationPath lightgroup_tools_v1_0_12.zip)",
+      "Bash(unzip -l lightgroup_tools_v1_0_12.zip)"
+    ]
+  }
+}

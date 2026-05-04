@@ -1,4 +1,5 @@
 import bpy
+import sys
 import urllib.request
 import urllib.error
 import json
@@ -8,15 +9,36 @@ import shutil
 from pathlib import Path
 
 
+def _get_update_dir():
+    """Path to the staging dir where downloaded updates are extracted."""
+    return os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_update")
+
+
+def _get_backup_dir():
+    """Path to the backup dir holding the previous addon version for rollback."""
+    return os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_backup")
+
+
 # Preferences to store update info (persists across sessions)
 class LightgroupToolsPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__.partition('.')[0]
-    
+
     update_available: bpy.props.BoolProperty(default=False)
     latest_version: bpy.props.StringProperty(default="")
     download_url: bpy.props.StringProperty(default="")
     update_downloaded: bpy.props.BoolProperty(default=False)
     staged_update_path: bpy.props.StringProperty(default="")
+    # The version string of whatever is currently staged in staged_update_path
+    # (set when downloading or queuing a restore, read by the install handler).
+    staged_update_version: bpy.props.StringProperty(default="")
+
+    # Backup of the pre-update addon files, for rollback
+    backup_available: bpy.props.BoolProperty(default=False)
+    backup_version: bpy.props.StringProperty(default="")
+
+    # Sticky banner asking user to restart after an in-session update install
+    update_just_installed: bpy.props.BoolProperty(default=False)
+    last_installed_version: bpy.props.StringProperty(default="")
 
 
 class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
@@ -55,7 +77,13 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
             print(f"Response received, tag: {data.get('tag_name', 'NOT FOUND')}")
                 
             latest_version_str = data["tag_name"].lstrip("v")
-            latest_version = tuple(map(int, latest_version_str.split(".")))
+            try:
+                latest_version = tuple(map(int, latest_version_str.split(".")))
+            except ValueError:
+                msg = f"Couldn't parse release tag '{data['tag_name']}' as a version. Tags must be vX.Y.Z (digits only)."
+                print(f"ERROR: {msg}")
+                self.report({'ERROR'}, msg)
+                return {'CANCELLED'}
             
             print(f"Latest version: {latest_version}")
             
@@ -125,41 +153,55 @@ class LIGHTGROUP_OT_download_update(bpy.types.Operator):
         
         try:
             self.report({'INFO'}, "Downloading update...")
-            
-            # Use a persistent location instead of temp
-            # Store in Blender's config directory
-            import tempfile
-            persistent_dir = os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_update")
+
+            persistent_dir = _get_update_dir()
             os.makedirs(persistent_dir, exist_ok=True)
-            
+
             temp_zip = os.path.join(persistent_dir, "update.zip")
             urllib.request.urlretrieve(download_url, temp_zip)
-            
+
+            # Validate the downloaded file before extracting — guards against
+            # truncated/empty downloads that would otherwise stage garbage.
+            if not os.path.exists(temp_zip) or os.path.getsize(temp_zip) == 0:
+                self.report({'ERROR'}, "Downloaded file is empty")
+                return {'CANCELLED'}
+            if not zipfile.is_zipfile(temp_zip):
+                self.report({'ERROR'}, "Downloaded file is not a valid zip archive")
+                return {'CANCELLED'}
+
             # Extract
             extract_dir = os.path.join(persistent_dir, "extracted")
             if os.path.exists(extract_dir):
                 shutil.rmtree(extract_dir)
-            
+
             with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
-            
-            # Find addon folder
+
+            # Find the addon folder inside the extracted archive.
+            # GitHub zipballs wrap everything in a top-level dir like
+            # `thedavidcarney-DavidsBlenderProductionToolkit-<sha>/`, so look for
+            # whichever subdirectory actually contains `lightgroup_tools/`.
             extracted_contents = os.listdir(extract_dir)
             if not extracted_contents:
                 self.report({'ERROR'}, "Downloaded archive is empty")
                 return {'CANCELLED'}
-            
-            root_folder = extracted_contents[0]
-            addon_source = os.path.join(extract_dir, root_folder, "lightgroup_tools")
-            
-            if not os.path.exists(addon_source):
-                self.report({'ERROR'}, "Could not find addon folder in archive")
+
+            addon_source = None
+            for entry in extracted_contents:
+                candidate = os.path.join(extract_dir, entry, "lightgroup_tools")
+                if os.path.isdir(candidate):
+                    addon_source = candidate
+                    break
+
+            if addon_source is None:
+                self.report({'ERROR'}, "Could not find 'lightgroup_tools' folder in archive")
                 return {'CANCELLED'}
-            
+
             # Store the path in preferences (persists!)
             prefs.staged_update_path = addon_source
+            prefs.staged_update_version = prefs.latest_version
             prefs.update_downloaded = True
-            
+
             # CRITICAL: Save preferences to disk so they persist!
             bpy.ops.wm.save_userpref()
             
@@ -203,14 +245,36 @@ def install_update_on_load(dummy):
                 return
             
             print(f"Lightgroup Tools: Staged path exists, installing...")
-            
+
             # Get the current addon directory
             addon_dir = os.path.dirname(os.path.realpath(__file__))
             print(f"Lightgroup Tools: Installing to: {addon_dir}")
-            
-            # Get the update directory for cleanup later
-            update_base_dir = os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_update")
-            
+
+            update_base_dir = _get_update_dir()
+            backup_dir = _get_backup_dir()
+            installed_version = prefs.staged_update_version
+
+            # Determine the version we're about to replace, for the backup label.
+            pre_install_version = ""
+            try:
+                if addon_name in sys.modules and hasattr(sys.modules[addon_name], "bl_info"):
+                    pre_install_version = ".".join(map(str, sys.modules[addon_name].bl_info["version"]))
+            except Exception as version_error:
+                print(f"Lightgroup Tools: Could not determine current version for backup: {version_error}")
+
+            # Back up the current addon dir before overwriting, so the user can roll back.
+            # Treated as best-effort: if backup fails the install still proceeds, but the
+            # user won't have rollback for this version.
+            try:
+                if os.path.exists(backup_dir):
+                    shutil.rmtree(backup_dir)
+                shutil.copytree(addon_dir, backup_dir, ignore=shutil.ignore_patterns('__pycache__'))
+                prefs.backup_available = True
+                prefs.backup_version = pre_install_version
+                print(f"Lightgroup Tools: Backed up current version (v{pre_install_version}) to: {backup_dir}")
+            except Exception as backup_error:
+                print(f"Lightgroup Tools: Warning - could not create backup: {backup_error}")
+
             # First, remove __pycache__ from addon directory
             pycache_dir = os.path.join(addon_dir, "__pycache__")
             if os.path.exists(pycache_dir):
@@ -219,36 +283,36 @@ def install_update_on_load(dummy):
                     shutil.rmtree(pycache_dir)
                 except Exception as e:
                     print(f"Lightgroup Tools: Warning - could not remove __pycache__: {e}")
-            
+
             # Copy new files over
             files_copied = 0
             for item in os.listdir(staged_path):
                 if item == "__pycache__":
                     continue
-                
+
                 s = os.path.join(staged_path, item)
                 d = os.path.join(addon_dir, item)
-                
+
                 print(f"Lightgroup Tools: Copying {item}...")
-                
+
                 try:
                     if os.path.exists(d):
                         if os.path.isdir(d):
                             shutil.rmtree(d)
                         else:
                             os.remove(d)
-                    
+
                     if os.path.isdir(s):
                         shutil.copytree(s, d)
                     else:
                         shutil.copy2(s, d)
-                    
+
                     files_copied += 1
                 except Exception as e:
                     print(f"Lightgroup Tools: Error copying {item}: {e}")
-            
+
             print(f"Lightgroup Tools: Copied {files_copied} files/folders")
-            
+
             # Clean up the update directory
             print(f"Lightgroup Tools: Cleaning up update directory...")
             try:
@@ -257,12 +321,17 @@ def install_update_on_load(dummy):
                     print(f"Lightgroup Tools: Update directory cleaned up")
             except Exception as e:
                 print(f"Lightgroup Tools: Warning - could not clean up update directory: {e}")
-            
+
             # Clean up flags in preferences
             prefs.update_downloaded = False
             prefs.staged_update_path = ""
+            prefs.staged_update_version = ""
             prefs.update_available = False
-            
+
+            # Sticky banner: tell the user a restart is recommended for full effect.
+            prefs.update_just_installed = True
+            prefs.last_installed_version = installed_version
+
             # Save preferences after cleanup
             bpy.ops.wm.save_userpref()
             
@@ -285,15 +354,81 @@ def install_update_on_load(dummy):
         traceback.print_exc()
 
 
+class LIGHTGROUP_OT_restore_backup(bpy.types.Operator):
+    """Restore the previous version of the addon from backup (requires Blender restart)"""
+    bl_idname = "lightgroup.restore_backup"
+    bl_label = "Restore Previous Version"
+
+    def execute(self, context):
+        addon_name = __name__.partition('.')[0]
+        if addon_name not in context.preferences.addons:
+            self.report({'ERROR'}, "Could not access addon preferences")
+            return {'CANCELLED'}
+        prefs = context.preferences.addons[addon_name].preferences
+
+        if not prefs.backup_available:
+            self.report({'WARNING'}, "No backup available")
+            return {'CANCELLED'}
+
+        backup_dir = _get_backup_dir()
+        if not os.path.exists(backup_dir):
+            self.report({'ERROR'}, "Backup directory missing — cannot restore")
+            prefs.backup_available = False
+            prefs.backup_version = ""
+            bpy.ops.wm.save_userpref()
+            return {'CANCELLED'}
+
+        # Stage the backup via the same install pipeline used for updates.
+        # We copy into the staging dir (rather than pointing staged_update_path
+        # directly at the backup) so the install handler's cleanup step doesn't
+        # delete our backup.
+        try:
+            update_base_dir = _get_update_dir()
+            if os.path.exists(update_base_dir):
+                shutil.rmtree(update_base_dir)
+            os.makedirs(update_base_dir, exist_ok=True)
+            staged_path = os.path.join(update_base_dir, "lightgroup_tools")
+            shutil.copytree(backup_dir, staged_path)
+
+            prefs.staged_update_path = staged_path
+            prefs.staged_update_version = prefs.backup_version
+            prefs.update_downloaded = True
+            bpy.ops.wm.save_userpref()
+
+            label = f"v{prefs.backup_version}" if prefs.backup_version else "previous version"
+            self.report({'INFO'}, f"Restore queued ({label}). Restart Blender to apply.")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Could not stage backup for restore: {e}")
+            return {'CANCELLED'}
+
+
+class LIGHTGROUP_OT_dismiss_install_notice(bpy.types.Operator):
+    """Dismiss the 'Restart Blender' notice for the recent install"""
+    bl_idname = "lightgroup.dismiss_install_notice"
+    bl_label = "Dismiss"
+
+    def execute(self, context):
+        addon_name = __name__.partition('.')[0]
+        if addon_name not in context.preferences.addons:
+            return {'CANCELLED'}
+        prefs = context.preferences.addons[addon_name].preferences
+        prefs.update_just_installed = False
+        prefs.last_installed_version = ""
+        bpy.ops.wm.save_userpref()
+        return {'FINISHED'}
+
+
 def register_handlers():
-    # Register for both load_post (loading a file) and load_factory_startup_post (fresh start)
+    # `load_post` fires on Blender startup (after the startup .blend loads) and
+    # on any subsequent file open, which is sufficient. Earlier versions also
+    # registered `load_factory_startup_post` based on a misdiagnosis — that
+    # event only fires for File > New / factory settings load, which is not a
+    # useful update moment.
     if install_update_on_load not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(install_update_on_load)
-    if install_update_on_load not in bpy.app.handlers.load_factory_startup_post:
-        bpy.app.handlers.load_factory_startup_post.append(install_update_on_load)
+
 
 def unregister_handlers():
     if install_update_on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(install_update_on_load)
-    if install_update_on_load in bpy.app.handlers.load_factory_startup_post:
-        bpy.app.handlers.load_factory_startup_post.remove(install_update_on_load)

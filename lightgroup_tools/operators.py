@@ -70,12 +70,22 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
             for node in material.node_tree.nodes:
                 # Check if the node is an Emission shader
                 if node.type == 'EMISSION':
-                    # Check if it's connected or has non-zero strength
-                    is_connected = any(output.is_linked for output in node.outputs)
-                    has_strength = node.inputs[1].default_value > 0 if len(node.inputs) > 1 else True
-                    
-                    if is_connected or has_strength:
-                        # Avoid duplicates
+                    color_socket = node.inputs[0] if len(node.inputs) > 0 else None
+                    strength_socket = node.inputs[1] if len(node.inputs) > 1 else None
+
+                    has_strength = strength_socket and strength_socket.default_value > 0
+                    has_strength_connection = strength_socket and strength_socket.is_linked
+                    has_color_connection = color_socket and color_socket.is_linked
+
+                    # Check if emission color is not black (0,0,0)
+                    has_nonzero_color = False
+                    if color_socket and not color_socket.is_linked:
+                        color = color_socket.default_value
+                        has_nonzero_color = any(c > 0.001 for c in color[:3])
+
+                    # Same logic as the Principled BSDF path: only emissive if strength > 0
+                    # AND (color is non-black OR color is connected), OR strength is connected
+                    if (has_strength and (has_nonzero_color or has_color_connection)) or has_strength_connection:
                         if material.name not in emissive_materials:
                             emissive_materials.append(material.name)
                             print(f"Found Emissive Mat: {material.name}")
