@@ -354,6 +354,14 @@ def install_update_on_load(dummy):
                     if mod_name == addon_name or mod_name.startswith(addon_name + "."):
                         del sys.modules[mod_name]
 
+                # Belt-and-suspenders: ask Blender's addon registry to re-scan
+                # so it sees the new file state too. CGCookie's updater relies
+                # on this alone (no sys.modules eviction); we do both.
+                try:
+                    bpy.ops.preferences.addon_refresh()
+                except Exception as refresh_error:
+                    print(f"Lightgroup Tools: addon_refresh failed (non-fatal): {refresh_error}")
+
                 bpy.ops.preferences.addon_enable(module=addon_name)
                 print("Lightgroup Tools: Add-on reloaded with new version!")
             except Exception as reload_error:

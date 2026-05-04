@@ -56,6 +56,10 @@ Release process:
 4. Tag a GitHub release with `vX.Y.Z` (the updater parses `tag_name` and expects exactly that format — see `updater.py:57`)
 5. Test in Blender: "Check for Updates" → "Download Update" → restart
 
+**When Claude is helping with a release: always provide both a commit message AND a release message in the same response, ready to copy-paste.** David uses GitHub Desktop for the commit and the GitHub web UI for the release, so he needs them as two distinct ready-to-go strings:
+- Commit message: short, matches the existing terse repo style (`vX.Y.Z — short description`)
+- Release message: richer prose for the GitHub release notes box, explaining what changed, why it matters, and any user-visible impact (especially migration caveats — e.g. "this fix only takes effect for X → X+1 transitions").
+
 No CI, no test framework. Blender addons are tested by loading them in Blender.
 
 ## Updater quirks worth knowing
@@ -68,7 +72,7 @@ No CI, no test framework. Blender addons are tested by loading them in Blender.
 - Downloads are validated with `zipfile.is_zipfile` and a non-zero size check before extraction so a truncated download doesn't silently stage garbage.
 - Backup is best-effort: if it fails, the install still proceeds (the user just won't have rollback for that version). The backup is created on every successful update; only the most recent backup is retained.
 - The "Update vX installed — restart Blender for full effect" banner is sticky (lives in `update_just_installed` pref); the user dismisses it via a button or by ignoring it. It does not auto-clear on restart since prefs persist; user has to dismiss explicitly.
-- **In-session reload requires `sys.modules` eviction before `addon_enable`.** Without it, Python returns the OLD module objects from cache and the addon re-registers the OLD code even though new files are on disk. This bit a real user (v1.0.11 → v1.0.12 transition): after restart Blender disabled the addon and re-enabling it raised `module 'lightgroup_tools.updater' has no attribute '<new_class>'`, requiring manual folder delete + zip reinstall. The eviction loop is in `install_update_on_load` between `addon_disable` and `addon_enable` — don't remove it. CGCookie's `blender-addon-updater` does the equivalent via `addon_utils.modules_refresh()`; ours does it directly with `sys.modules`.
+- **In-session reload requires `sys.modules` eviction before `addon_enable`.** Without it, Python returns the OLD module objects from cache and the addon re-registers the OLD code even though new files are on disk. This bit a real user (v1.0.11 → v1.0.12 transition): after restart Blender disabled the addon and re-enabling it raised `module 'lightgroup_tools.updater' has no attribute '<new_class>'`, requiring manual folder delete + zip reinstall. The eviction loop is in `install_update_on_load` between `addon_disable` and `addon_enable` — don't remove it. We also call `bpy.ops.preferences.addon_refresh()` between the eviction and `addon_enable` as belt-and-suspenders. (CGCookie's `blender-addon-updater` relies on `addon_refresh()` alone, no sys.modules eviction — empirically that works for them but our combined approach is more direct.)
 
 ## Code-review notes when working on this addon
 
