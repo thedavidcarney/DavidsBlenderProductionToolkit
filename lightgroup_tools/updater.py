@@ -102,7 +102,7 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
                 
                 return {'FINISHED'}
             else:
-                message = "You have the latest version!"
+                message = f"You have the latest version (v{latest_version_str})"
                 print(message)
                 self.report({'INFO'}, message)
                 prefs.update_available = False

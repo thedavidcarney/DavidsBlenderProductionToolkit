@@ -8,7 +8,9 @@
       "Bash(python -m py_compile lightgroup_tools/__init__.py lightgroup_tools/operators.py lightgroup_tools/updater.py)",
       "Bash(python -c ' *)",
       "Bash(unzip -l lightgroup_tools_v1_0_13.zip)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python -m py_compile lightgroup_tools/updater.py lightgroup_tools/__init__.py)",
+      "Bash(unzip -l lightgroup_tools_v1_0_14.zip)"
     ]
   }
 }

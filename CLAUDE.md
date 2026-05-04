@@ -56,7 +56,9 @@ Release process:
 4. Tag a GitHub release with `vX.Y.Z` (the updater parses `tag_name` and expects exactly that format — see `updater.py:57`)
 5. Test in Blender: "Check for Updates" → "Download Update" → restart
 
-**When Claude is helping with a release: always provide both a commit message AND a release message in the same response, ready to copy-paste.** David uses GitHub Desktop for the commit and the GitHub web UI for the release, so he needs them as two distinct ready-to-go strings:
+**Don't autonomously bump versions or build release zips after a code change.** Wait for David to explicitly say it's time to release ("bump and publish", "let's ship it", etc.). Multiple changes may land in the same release; some changes are exploratory and shouldn't ship at all. After a code change, just make the change and stop — don't proactively bump `bl_info["version"]` or rebuild the zip.
+
+**When David does call for a release: always provide both a commit message AND a release message in the same response, ready to copy-paste.** He uses GitHub Desktop for the commit and the GitHub web UI for the release, so he needs them as two distinct ready-to-go strings:
 - Commit message: short, matches the existing terse repo style (`vX.Y.Z — short description`)
 - Release message: richer prose for the GitHub release notes box, explaining what changed, why it matters, and any user-visible impact (especially migration caveats — e.g. "this fix only takes effect for X → X+1 transitions").
 
