@@ -98,12 +98,22 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
                         elif input_socket.name == "Emission Strength":
                             emission_strength_socket = input_socket
                     
-                    # Check if emission strength > 0 or if emission is connected
+                    # Check if emission strength > 0
                     has_emission_strength = emission_strength_socket and emission_strength_socket.default_value > 0
+                    
+                    # Check if emission color is not black (0,0,0)
+                    has_nonzero_color = False
+                    if emission_socket and not emission_socket.is_linked:
+                        color = emission_socket.default_value
+                        has_nonzero_color = any(c > 0.001 for c in color[:3])  # Check RGB, ignore alpha
+                    
+                    # Check connections
                     has_emission_connection = emission_strength_socket and emission_strength_socket.is_linked
                     has_color_connection = emission_socket and emission_socket.is_linked
                     
-                    if has_emission_strength or has_emission_connection or has_color_connection:
+                    # Only consider emissive if strength > 0 AND (color is non-black OR color is connected)
+                    # OR if strength socket is connected
+                    if (has_emission_strength and (has_nonzero_color or has_color_connection)) or has_emission_connection:
                         # Avoid duplicates
                         if material.name not in emissive_materials:
                             emissive_materials.append(material.name)
@@ -277,8 +287,8 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
                 links.new(lightGroupOutput, denoiseNode.inputs[0])
                 
                 # link the denoising data
-                links.new(denoisingNormalOutput, denoiseNode.inputs[1])
-                links.new(denoisingAlbedoOutput, denoiseNode.inputs[2])
+                links.new(denoisingAlbedoOutput, denoiseNode.inputs[1])
+                links.new(denoisingNormalOutput, denoiseNode.inputs[2])
                 
                 # link the denoiser to file output
                 # Handle both Blender 4.5 and 5.0 slot naming

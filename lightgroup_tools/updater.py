@@ -194,23 +194,44 @@ def install_update_on_load(dummy):
             staged_path = prefs.staged_update_path
             print(f"Lightgroup Tools: Staged path: {staged_path}")
             
-            if os.path.exists(staged_path):
-                print(f"Lightgroup Tools: Staged path exists, installing...")
+            if not os.path.exists(staged_path):
+                print(f"Lightgroup Tools: Staged path does not exist: {staged_path}")
+                # Clean up the flag since the path is invalid
+                prefs.update_downloaded = False
+                prefs.staged_update_path = ""
+                bpy.ops.wm.save_userpref()
+                return
+            
+            print(f"Lightgroup Tools: Staged path exists, installing...")
+            
+            # Get the current addon directory
+            addon_dir = os.path.dirname(os.path.realpath(__file__))
+            print(f"Lightgroup Tools: Installing to: {addon_dir}")
+            
+            # Get the update directory for cleanup later
+            update_base_dir = os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_update")
+            
+            # First, remove __pycache__ from addon directory
+            pycache_dir = os.path.join(addon_dir, "__pycache__")
+            if os.path.exists(pycache_dir):
+                print(f"Lightgroup Tools: Removing old __pycache__...")
+                try:
+                    shutil.rmtree(pycache_dir)
+                except Exception as e:
+                    print(f"Lightgroup Tools: Warning - could not remove __pycache__: {e}")
+            
+            # Copy new files over
+            files_copied = 0
+            for item in os.listdir(staged_path):
+                if item == "__pycache__":
+                    continue
                 
-                # Get the current addon directory
-                addon_dir = os.path.dirname(os.path.realpath(__file__))
-                print(f"Lightgroup Tools: Installing to: {addon_dir}")
+                s = os.path.join(staged_path, item)
+                d = os.path.join(addon_dir, item)
                 
-                # Copy new files over
-                for item in os.listdir(staged_path):
-                    if item == "__pycache__":
-                        continue
-                    
-                    s = os.path.join(staged_path, item)
-                    d = os.path.join(addon_dir, item)
-                    
-                    print(f"Lightgroup Tools: Copying {item}...")
-                    
+                print(f"Lightgroup Tools: Copying {item}...")
+                
+                try:
                     if os.path.exists(d):
                         if os.path.isdir(d):
                             shutil.rmtree(d)
@@ -221,28 +242,41 @@ def install_update_on_load(dummy):
                         shutil.copytree(s, d)
                     else:
                         shutil.copy2(s, d)
-                
-                # Clean up flags in preferences
-                prefs.update_downloaded = False
-                prefs.staged_update_path = ""
-                prefs.update_available = False
-                
-                # Save preferences after cleanup
-                bpy.ops.wm.save_userpref()
-                
-                print("Lightgroup Tools: Update installed successfully!")
-                print("Lightgroup Tools: Reloading add-on...")
-                
-                # Reload the add-on to use the new code
-                try:
-                    bpy.ops.preferences.addon_disable(module=addon_name)
-                    bpy.ops.preferences.addon_enable(module=addon_name)
-                    print("Lightgroup Tools: Add-on reloaded with new version!")
-                except Exception as reload_error:
-                    print(f"Lightgroup Tools: Could not reload add-on: {reload_error}")
-                    print("Lightgroup Tools: Please restart Blender one more time to use the new version.")
-            else:
-                print(f"Lightgroup Tools: Staged path does not exist: {staged_path}")
+                    
+                    files_copied += 1
+                except Exception as e:
+                    print(f"Lightgroup Tools: Error copying {item}: {e}")
+            
+            print(f"Lightgroup Tools: Copied {files_copied} files/folders")
+            
+            # Clean up the update directory
+            print(f"Lightgroup Tools: Cleaning up update directory...")
+            try:
+                if os.path.exists(update_base_dir):
+                    shutil.rmtree(update_base_dir)
+                    print(f"Lightgroup Tools: Update directory cleaned up")
+            except Exception as e:
+                print(f"Lightgroup Tools: Warning - could not clean up update directory: {e}")
+            
+            # Clean up flags in preferences
+            prefs.update_downloaded = False
+            prefs.staged_update_path = ""
+            prefs.update_available = False
+            
+            # Save preferences after cleanup
+            bpy.ops.wm.save_userpref()
+            
+            print("Lightgroup Tools: Update installed successfully!")
+            print("Lightgroup Tools: Reloading add-on...")
+            
+            # Reload the add-on to use the new code
+            try:
+                bpy.ops.preferences.addon_disable(module=addon_name)
+                bpy.ops.preferences.addon_enable(module=addon_name)
+                print("Lightgroup Tools: Add-on reloaded with new version!")
+            except Exception as reload_error:
+                print(f"Lightgroup Tools: Could not reload add-on: {reload_error}")
+                print("Lightgroup Tools: The update is installed. Please restart Blender to use the new version.")
         else:
             print("Lightgroup Tools: No update to install")
     except Exception as e:
