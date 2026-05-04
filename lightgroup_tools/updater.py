@@ -341,6 +341,19 @@ def install_update_on_load(dummy):
             # Reload the add-on to use the new code
             try:
                 bpy.ops.preferences.addon_disable(module=addon_name)
+
+                # CRITICAL: evict the addon's cached module objects from
+                # sys.modules. Without this, addon_enable would just return the
+                # OLD modules from cache and re-register the OLD code, even
+                # though new files are already on disk. The user would then see
+                # an error on next startup (e.g. classes referenced by the new
+                # __init__.py but not present in the cached old updater.py),
+                # leaving the addon disabled and unrecoverable without manual
+                # delete + reinstall.
+                for mod_name in list(sys.modules.keys()):
+                    if mod_name == addon_name or mod_name.startswith(addon_name + "."):
+                        del sys.modules[mod_name]
+
                 bpy.ops.preferences.addon_enable(module=addon_name)
                 print("Lightgroup Tools: Add-on reloaded with new version!")
             except Exception as reload_error:
