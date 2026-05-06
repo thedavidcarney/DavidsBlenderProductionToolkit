@@ -17,7 +17,8 @@
       "WebSearch",
       "WebFetch(domain:blenderartists.org)",
       "WebFetch(domain:www.blendernation.com)",
-      "WebFetch(domain:developer.blender.org)"
+      "WebFetch(domain:developer.blender.org)",
+      "WebFetch(domain:incrypted.com)"
     ]
   }
 }
