@@ -9,8 +9,19 @@ bl_info = {
 }
 
 import bpy
-from . import operators
-from . import updater
+
+# Reload guard (standard Blender idiom). If this module's globals already hold the
+# submodules, we're being re-executed over a live addon -- e.g. Blender's "Install
+# from Disk" onto an already-enabled older version. A plain import would hand back
+# the STALE modules from sys.modules and register() would then fail on any class
+# newer than the previously installed build. Forcing a reload picks up the new files.
+if "operators" in locals():
+    import importlib
+    importlib.reload(operators)
+    importlib.reload(updater)
+else:
+    from . import operators
+    from . import updater
 
 def _get_prefs(context):
     """Fetch addon preferences, or None if the addon isn't registered under the expected name."""
