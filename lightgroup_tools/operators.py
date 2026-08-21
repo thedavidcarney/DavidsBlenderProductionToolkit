@@ -190,7 +190,10 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
         
         # SET UP COMPOSITOR
         # Prep lightgroups variables
-        lightGroups = context.scene.view_layers["ViewLayer"].lightgroups
+        # Use the active view layer rather than a hardcoded name, so this works
+        # in scenes where the view layer was renamed or there are several.
+        viewLayer = context.view_layer
+        lightGroups = viewLayer.lightgroups
         lightGroupsAmount = len(lightGroups)
         lightGroupsNames = []
         i = 0
@@ -202,7 +205,7 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
         
         # Make sure compositor nodes are on
         scene = context.scene
-        context.view_layer.cycles.denoising_store_passes = True
+        viewLayer.cycles.denoising_store_passes = True
         
         # Handle both Blender 4.5 and 5.0
         tree = None
@@ -231,6 +234,11 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
             
         renderLayersNode = tree.nodes.new(type='CompositorNodeRLayers')
         renderLayersNode.location = 0, 0
+        # A new Render Layers node defaults to the scene's FIRST view layer, not the
+        # active one. In scenes with multiple view layers that means it reads sockets
+        # from the wrong layer (missing Denoising Data / lightgroups), so pin it.
+        renderLayersNode.scene = scene
+        renderLayersNode.layer = viewLayer.name
         links = tree.links
         
         # Helper function to find output by name
@@ -246,8 +254,8 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
         
         # Check if denoising outputs exist
         if not denoisingNormalOutput or not denoisingAlbedoOutput:
-            print("ERROR: Denoising outputs not found. Make sure 'Denoising Data' is enabled in render settings.")
-            self.report({'ERROR'}, "Denoising outputs not found. Enable 'Denoising Data' in render settings.")
+            print(f"ERROR: Denoising outputs not found on view layer '{viewLayer.name}'. Make sure 'Denoising Data' is enabled in the Passes panel for that view layer.")
+            self.report({'ERROR'}, f"Denoising outputs not found on view layer '{viewLayer.name}'. Enable 'Denoising Data' in its Passes settings.")
             return {'CANCELLED'}
         
         # Create Output Node

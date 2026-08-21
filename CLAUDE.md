@@ -10,7 +10,7 @@ Typical scenes: hundreds of lights, 30+ lightgroups. An "ambient" layer is neede
 
 ## What `lightgroup_tools` does
 
-Sidebar panel in 3D View, Compositor, and View Layer properties. Four operators:
+Sidebar panel in 3D View, Compositor, and View Layer properties. The 3D View and Compositor panels share one `_draw_tools()` helper in `__init__.py` and show an identical button set — add new buttons there, not per-panel. (The compositor panel originally showed a deliberate subset; David changed his mind in Aug 2026 and wants full parity.) The View Layer properties panel is deliberately still a short subset — leave it that way. Four operators:
 
 - **Create Lightgroups for Each Light** (`LIGHTGROUP_OT_create_for_each_light`) — auto-creates one lightgroup per light, per emissive material's host objects, plus a `World` group. Shortcut for simple, well-named scenes; not used for big scenes. Includes black-emission-color filtering for both Principled BSDF (`Emission Color`/`Emission Strength`) and standalone Emission shader nodes — a material with strength > 0 but pure black color does NOT get a lightgroup. Color sockets that are linked count as emissive (we can't evaluate textures statically).
 - **Add Selected to Lightgroup** (`LIGHTGROUP_OT_assign_to_lightgroup`) — primary daily-use operator for complex scenes. Dropdown picker of existing lightgroups + "New Lightgroup..." option. Fills a real gap in Blender (no built-in bulk-assign-selected exists).
@@ -30,7 +30,7 @@ The compositor setup is Cycles-only. EEVEE lightgroup support is different/newer
 
 These are real production-team conventions, not bugs to fix:
 
-- **View layer name `"ViewLayer"`** is hardcoded in `lightgroup_tools/operators.py:183`. Was a fix for a past issue. Don't parameterize without asking.
+- **Active view layer** is used by the denoise operator (was hardcoded to `"ViewLayer"` until Aug 2026). The Render Layers node is explicitly pinned to `context.view_layer` via `renderLayersNode.scene` / `.layer` — a freshly created `CompositorNodeRLayers` otherwise defaults to the scene's *first* view layer, which in multi-view-layer scenes reads sockets from the wrong layer and produces a bogus "Denoising Data not enabled" error.
 - **Output path** assumes `04_Renders/01_Components/` exists two folders up from the .blend (typical numbered-folder production layout).
 - **EXR settings** (DWAB / 16-bit half / Filmic sRGB) match the team's AE pipeline.
 
