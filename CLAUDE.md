@@ -60,7 +60,7 @@ Release process:
 
 **When David does call for a release: always provide both a commit message AND a release message in the same response, ready to copy-paste.** He uses GitHub Desktop for the commit and the GitHub web UI for the release, so he needs them as two distinct ready-to-go strings:
 - Commit message: short, matches the existing terse repo style (`vX.Y.Z — short description`)
-- Release message: richer prose for the GitHub release notes box, explaining what changed, why it matters, and any user-visible impact (especially migration caveats — e.g. "this fix only takes effect for X → X+1 transitions").
+- Release message: **one short line** listing the additions. Nobody reads the release notes — don't write prose, don't write sections, don't explain the why. Same terse register as the commit message, just enumerating what's new.
 
 No CI, no test framework. Blender addons are tested by loading them in Blender.
 
