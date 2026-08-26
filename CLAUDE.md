@@ -82,9 +82,12 @@ Release process:
 2. Zip the `lightgroup_tools/` folder as `lightgroup_tools_v{maj}_{min}_{patch}.zip` at repo root
 3. Commit and push (Claude does this directly)
 4. Tag a GitHub release with `vX.Y.Z` (the updater parses `tag_name` and expects exactly that format — see `core/updater.py:93`)
-5. Test in Blender: "Check for Updates" → "Download Update" → restart
+5. **Attach the zip as a release binary.** Required — see below.
+6. Test in Blender: "Check for Updates" → "Download Update" → restart
 
 **Don't autonomously bump versions or build release zips after a code change.** Wait for David to explicitly say it's time to release ("bump and publish", "let's ship it", etc.). Multiple changes may land in the same release; some changes are exploratory and shouldn't ship at all. After a code change, just make the change and stop — don't proactively bump `bl_info["version"]` or rebuild the zip.
+
+**The attached release zip is required, even though the updater ignores it.** The updater downloads `zipball_url` — GitHub's auto-generated source archive — and digs the addon folder out of the `<owner>-<repo>-<sha>/` wrapper itself, so it never looks at release assets. But that wrapper puts the package one level deeper than Blender's installer expects, so the auto zipball **cannot** be used for a manual Install from Disk. Verified in 5.2: `addon_install()` on the raw zipball reports `Modules Installed ()` and raises nothing, then the addon simply isn't there. Silent failure. The hand-built `lightgroup_tools_vX_Y_Z.zip` (package at the zip root, no `__pycache__`) is the only thing that works for a first-time install, a new team member, or recovering a broken install — which is also the documented recovery path. Keep attaching it.
 
 **Committing and pushing are Claude's to do** — commit and push directly, matching the existing terse repo style (`vX.Y.Z — short description`, or a plain short description for non-release work). No need to hand David a commit message to paste.
 
