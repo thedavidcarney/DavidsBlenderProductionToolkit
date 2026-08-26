@@ -64,13 +64,16 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
         
         print(f"Checking for updates from: {github_user}/{github_repo}")
         
-        # Get current version from bl_info
-        from . import bl_info
-        current_version = bl_info["version"]
-        print(f"Current version: {current_version}")
-        
-        # Get preferences safely
+        # Get current version from bl_info. Reached through sys.modules rather
+        # than a relative import, so this keeps working wherever updater.py sits
+        # in the package tree -- it moved into core/ during the restructure, and
+        # `from . import bl_info` would have started resolving against core/.
+        # Matches how the other bl_info reads in this file already work.
         addon_name = __name__.partition('.')[0]
+        current_version = sys.modules[addon_name].bl_info["version"]
+        print(f"Current version: {current_version}")
+
+        # Get preferences safely
         if addon_name not in context.preferences.addons:
             self.report({'ERROR'}, "Could not access addon preferences")
             return {'CANCELLED'}
@@ -267,8 +270,21 @@ def install_update_on_load(dummy):
             
             print(f"Lightgroup Tools: Staged path exists, installing...")
 
-            # Get the current addon directory
-            addon_dir = os.path.dirname(os.path.realpath(__file__))
+            # Get the current addon directory.
+            #
+            # This MUST resolve to the top-level package dir. Deriving it from
+            # this file's __file__ was correct while updater.py sat at the top
+            # level, but it now lives in core/ -- dirname(__file__) would point
+            # at lightgroup_tools/core/, and we would install the update inside
+            # core/ while backing up only core/. Go through the package module
+            # instead, which is location-independent.
+            addon_dir = None
+            addon_module = sys.modules.get(addon_name)
+            if addon_module is not None and getattr(addon_module, "__file__", None):
+                addon_dir = os.path.dirname(os.path.realpath(addon_module.__file__))
+            if not addon_dir or not os.path.isdir(addon_dir):
+                print("Lightgroup Tools: Could not resolve the addon directory; aborting install")
+                return
             print(f"Lightgroup Tools: Installing to: {addon_dir}")
 
             update_base_dir = _get_update_dir()
@@ -333,6 +349,29 @@ def install_update_on_load(dummy):
                     print(f"Lightgroup Tools: Error copying {item}: {e}")
 
             print(f"Lightgroup Tools: Copied {files_copied} files/folders")
+
+            # Remove modules that the previous layout had but this build doesn't.
+            #
+            # The copy loop above only touches paths that exist in the NEW build,
+            # so anything dropped between versions lingers forever. Up to v1.0.15
+            # updater.py and operators.py sat flat at the top level; they now live
+            # in core/ and lightgroups/. Without this, that one upgrade leaves two
+            # dead modules sitting beside the new packages -- inert, since nothing
+            # imports them, but exactly the shape that causes import confusion for
+            # whoever opens the folder next.
+            #
+            # Deliberately an explicit list rather than "mirror the staged tree":
+            # a general delete-what's-missing pass could wipe a live install if a
+            # staged build were ever partial, and the updater is the one thing
+            # that must never fail destructively.
+            for orphan in ("updater.py", "operators.py"):
+                orphan_path = os.path.join(addon_dir, orphan)
+                if os.path.isfile(orphan_path) and not os.path.exists(os.path.join(staged_path, orphan)):
+                    try:
+                        os.remove(orphan_path)
+                        print(f"Lightgroup Tools: Removed pre-restructure module {orphan}")
+                    except Exception as orphan_error:
+                        print(f"Lightgroup Tools: Warning - could not remove {orphan}: {orphan_error}")
 
             # Clean up the update directory
             print(f"Lightgroup Tools: Cleaning up update directory...")

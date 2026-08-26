@@ -10,151 +10,62 @@ bl_info = {
 
 import bpy
 
-# Reload guard (standard Blender idiom). If this module's globals already hold the
-# submodules, we're being re-executed over a live addon -- e.g. Blender's "Install
-# from Disk" onto an already-enabled older version. A plain import would hand back
-# the STALE modules from sys.modules and register() would then fail on any class
-# newer than the previously installed build. Forcing a reload picks up the new files.
-if "operators" in locals():
+# --- Package layout ---------------------------------------------------------
+#
+#   core/         shared infrastructure (updater, preferences)
+#   lightgroups/  the Lightgroups tab
+#
+# Each subpackage owns a `classes` tuple; this module just aggregates and
+# registers them. A new tool means a new subpackage and two lines here -- it
+# does NOT mean touching the existing tools.
+#
+# --- Reload guard -----------------------------------------------------------
+#
+# If this module's globals already hold the subpackages, we're being re-executed
+# over a live addon -- e.g. Blender's "Install from Disk" onto an already-enabled
+# older version. A plain import would hand back the STALE modules from
+# sys.modules, and register() would then fail on any class newer than the
+# previously installed build (this bit a tester on v1.0.14 with
+# "module 'lightgroup_tools.updater' has no attribute
+# LIGHTGROUP_OT_restore_backup").
+#
+# Order is load-bearing: LEAF MODULES FIRST, THEN THEIR PACKAGES. Each package's
+# `classes` tuple is built at import time from its submodules, so reloading a
+# package before its submodules would rebuild that tuple out of stale classes --
+# the exact bug the guard exists to prevent, just moved one level up.
+#
+# importlib.reload mutates modules in place and returns the same object, so
+# every existing reference (including `core.updater`, and the package attributes
+# themselves) sees the new code once this block has run.
+if "core" in locals():
     import importlib
-    importlib.reload(operators)
-    importlib.reload(updater)
+
+    importlib.reload(core.updater)
+    importlib.reload(lightgroups.operators)
+    importlib.reload(lightgroups.panels)
+    importlib.reload(core)
+    importlib.reload(lightgroups)
 else:
-    from . import operators
-    from . import updater
-
-def _get_prefs(context):
-    """Fetch addon preferences, or None if the addon isn't registered under the expected name."""
-    addon_name = __name__.partition('.')[0]
-    if addon_name in context.preferences.addons:
-        return context.preferences.addons[addon_name].preferences
-    return None
+    from . import core
+    from . import lightgroups
 
 
-def _draw_tools(layout, context):
-    """Draw the full Lightgroup Tools button set.
+# Registration order across the toolkit. Preferences land first (via core), and
+# panels last, matching what shipped in v1.0.15.
+classes = core.classes + lightgroups.classes
 
-    Shared by every panel so the 3D View and Compositor sidebars can't drift
-    apart the way they did previously (the compositor was missing two buttons).
-    """
-    prefs = _get_prefs(context)
-
-    layout.label(text="Setup:")
-    layout.operator("lightgroup.clear_all_lightgroups", icon='X', text="Clear All Lightgroups")
-    layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
-    layout.operator("lightgroup.assign_to_lightgroup", icon='LINKED', text="Add Selected to Lightgroup")
-
-    layout.separator()
-
-    layout.label(text="Compositor:")
-    layout.operator("lightgroup.denoise_all_cycles", icon='NODE_COMPOSITING')
-
-    layout.separator()
-
-    # Update section
-    layout.label(text="Updates:")
-
-    if prefs:
-        # Sticky restart-required notice from a recent in-session install
-        if prefs.update_just_installed:
-            box = layout.box()
-            version_label = f"Update v{prefs.last_installed_version} installed" if prefs.last_installed_version else "Update installed"
-            box.label(text=version_label, icon='CHECKMARK')
-            box.label(text="Restart Blender for full effect", icon='INFO')
-            box.operator("lightgroup.dismiss_install_notice", icon='X')
-
-    row = layout.row()
-    row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
-
-    # Show update available message and download button
-    if prefs:
-        if prefs.update_downloaded:
-            box = layout.box()
-            box.label(text="Update ready!", icon='CHECKMARK')
-            box.label(text="Restart Blender to install", icon='INFO')
-        elif prefs.update_available:
-            box = layout.box()
-            box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
-            box.operator("lightgroup.download_update", icon='IMPORT')
-
-        # Rollback to the backup of the previous version
-        if prefs.backup_available:
-            row = layout.row()
-            restore_text = f"Restore Previous Version (v{prefs.backup_version})" if prefs.backup_version else "Restore Previous Version"
-            row.operator("lightgroup.restore_backup", icon='RECOVER_LAST', text=restore_text)
-
-
-class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
-    """Main panel for Lightgroup Tools in 3D Viewport"""
-    bl_label = "Lightgroup Tools"
-    bl_idname = "LIGHTGROUP_PT_main_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Lightgroups'
-
-    def draw(self, context):
-        _draw_tools(self.layout, context)
-
-
-class LIGHTGROUP_PT_compositor_panel(bpy.types.Panel):
-    """Main panel for Lightgroup Tools in Compositor"""
-    bl_label = "Lightgroup Tools"
-    bl_idname = "LIGHTGROUP_PT_compositor_panel"
-    bl_space_type = 'NODE_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = 'Lightgroups'
-
-    @classmethod
-    def poll(cls, context):
-        # Only show in compositor
-        return context.space_data.tree_type == 'CompositorNodeTree'
-
-    def draw(self, context):
-        _draw_tools(self.layout, context)
-
-
-class LIGHTGROUP_PT_viewlayer_panel(bpy.types.Panel):
-    """Panel in View Layer properties"""
-    bl_label = "Lightgroup Tools"
-    bl_idname = "LIGHTGROUP_PT_viewlayer_panel"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = "view_layer"
-    bl_options = {'DEFAULT_CLOSED'}
-    
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("lightgroup.clear_all_lightgroups", icon='X', text="Clear All Lightgroups")
-        layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
-
-
-classes = (
-    updater.LightgroupToolsPreferences,
-    operators.LIGHTGROUP_OT_clear_all_lightgroups,
-    operators.LIGHTGROUP_OT_create_for_each_light,
-    operators.LIGHTGROUP_OT_denoise_all_cycles,
-    operators.LIGHTGROUP_OT_assign_to_lightgroup,
-    updater.LIGHTGROUP_OT_check_updates,
-    updater.LIGHTGROUP_OT_download_update,
-    updater.LIGHTGROUP_OT_restore_backup,
-    updater.LIGHTGROUP_OT_dismiss_install_notice,
-    updater.LIGHTGROUP_OT_update_dialog,
-    updater.LIGHTGROUP_OT_restart_dialog,
-    updater.LIGHTGROUP_OT_close_dialog,
-    LIGHTGROUP_PT_main_panel,
-    LIGHTGROUP_PT_compositor_panel,
-    LIGHTGROUP_PT_viewlayer_panel,
-)
 
 def register():
-    updater.register_handlers()
+    core.updater.register_handlers()
     for cls in classes:
         bpy.utils.register_class(cls)
+
 
 def unregister():
     for cls in classes:
         bpy.utils.unregister_class(cls)
-    updater.unregister_handlers()
+    core.updater.unregister_handlers()
+
 
 if __name__ == "__main__":
     register()
