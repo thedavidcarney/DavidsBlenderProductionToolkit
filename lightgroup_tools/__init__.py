@@ -14,6 +14,7 @@ import bpy
 #
 #   core/         shared infrastructure (updater, preferences)
 #   lightgroups/  the Lightgroups tab
+#   festoon/      the Festoon Clicker tab
 #
 # Each subpackage owns a `classes` tuple; this module just aggregates and
 # registers them. A new tool means a new subpackage and two lines here -- it
@@ -43,25 +44,39 @@ if "core" in locals():
     importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
     importlib.reload(lightgroups.panels)
+    # festoon's own submodules import each other, so they reload innermost
+    # first: picking and shape are leaves, nodes feeds rig, rig feeds operators.
+    importlib.reload(festoon.picking)
+    importlib.reload(festoon.shape)
+    importlib.reload(festoon.nodes)
+    importlib.reload(festoon.rig)
+    importlib.reload(festoon.operators)
+    importlib.reload(festoon.panels)
     importlib.reload(core)
     importlib.reload(lightgroups)
+    importlib.reload(festoon)
 else:
     from . import core
     from . import lightgroups
+    from . import festoon
 
 
 # Registration order across the toolkit. Preferences land first (via core), and
 # panels last, matching what shipped in v1.0.15.
-classes = core.classes + lightgroups.classes
+classes = core.classes + lightgroups.classes + festoon.classes
 
 
 def register():
     core.updater.register_handlers()
     for cls in classes:
         bpy.utils.register_class(cls)
+    # After the classes: festoon's scene PointerProperty references
+    # FestoonSettings, which has to be a registered type by then.
+    festoon.register()
 
 
 def unregister():
+    festoon.unregister()
     for cls in classes:
         bpy.utils.unregister_class(cls)
     core.updater.unregister_handlers()

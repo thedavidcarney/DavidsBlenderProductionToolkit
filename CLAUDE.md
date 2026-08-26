@@ -9,8 +9,15 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 ├── __init__.py            registration hub + reload guard. No feature code.
 ├── core/                  shared infrastructure (updater, preferences)
 │   └── updater.py
-└── lightgroups/           the 'Lightgroups' sidebar tab
-    ├── operators.py
+├── lightgroups/           the 'Lightgroups' sidebar tab
+│   ├── operators.py
+│   └── panels.py
+└── festoon/               the 'Festoon Clicker' sidebar tab
+    ├── picking.py         visibility-aware viewport raycasting
+    ├── shape.py           chord-frame maths + the sag shape function
+    ├── nodes.py           builds the Festoon Strand node group
+    ├── rig.py             strand mesh, empties, collection
+    ├── operators.py       modal placement
     └── panels.py
 ```
 
@@ -122,6 +129,71 @@ No CI. Blender addons are ultimately tested by loading them in Blender — but `
 - This addon was iterated through several conversations before Claude Code. Some prior changes were claimed "fixed!" without verification against the live file (e.g., the black-emission detection landed for Principled BSDF but the equivalent fix for the standalone Emission shader was forgotten until now). When changing logic that has a paired/symmetric path, **verify both halves**.
 - The `bl_info["version"]` and the zip filename (`lightgroup_tools_v{maj}_{min}_{patch}.zip`) and the GitHub release tag (`vX.Y.Z`) all have to stay in sync — easy to bump one and forget another.
 
+## Festoon Clicker
+
+Click-to-place festoon light strings. Own sidebar tab, deliberately separate
+from Lightgroups (that one is a per-job workhorse; this is a building tool).
+
+Three clicks: start, end, sag. The sag shape carries to the next strand, and
+placement stays active until you escape, so a run of similar strands is fast.
+Scroll during the sag step adjusts flatness.
+
+**Scene layout** — one `Festoons` collection; the three control empties are
+parented to the strand mesh whose modifier reads them. Not a dependency cycle:
+Blender models object transform and object geometry as separate depsgraph
+components (verified). Each strand collapses to one outliner row, and moving
+the strand mesh moves the whole thing rigidly.
+
+**The sag curve is not a real catenary, deliberately.** Straight chord plus an
+offset following `shape(t) = 1 - |(t-tc)/tc|^p` (mirrored past `tc`). It is 0
+at both ends and exactly 1 at the sag empty, so **the curve passes through the
+empty at any `p`** — position and flatness never fight. `p` comes from the sag
+empty's SCALE: 1 is a sharp V, ~2.2 reads as a catenary, 5-6 is a flat-bottomed
+swag. Not length-conserving: moving an endpoint leaves the sag where you put it.
+
+**Bulbs are instanced, uniform scale, no size randomness** — real bulbs are
+manufactured identical. Rotation randomness (tilt + spin) is wanted and is
+there.
+
+**Lightgroups:** strands are tagged with a `festoon_strand` custom property.
+Nothing is auto-assigned at placement (see the memory on that). The tag exists
+so `create_for_each_light` can be taught to find strands — their emission
+arrives via instancing, so they have no material slots and the current
+slot-based scan misses them entirely. **That teaching is not done yet.**
+
+## Blender 5.2 landmines
+
+Found the hard way while building Festoon Clicker. All verified by reducing to
+a minimal repro; several are 5.2-only regressions.
+
+- **An Object assigned to a geometry nodes MODIFIER input hangs Blender.** Hard
+  hang, no error, GUI and background alike. Reduces to five nodes (Object Info
+  → Curve Line → Resample). 5.0 and 5.1 run the identical setup fine. Setting
+  the object straight onto the Object Info node avoids it. **This is why each
+  strand gets its own node group** — node datablocks are per-tree. If this is
+  ever fixed, objects can move back onto modifier inputs and a single group can
+  be shared again.
+- **Modifier inputs cannot be written from Python at all on 5.2.**
+  `modifier.properties.inputs.<Socket_N>` is a read-only RNA *pointer*;
+  `modifier[identifier]` raises (it worked on 5.0/5.1); and the IDProperty
+  underneath accepts a write the evaluator then ignores — a cube driven by a
+  modifier input stayed at its interface default after being assigned a new
+  value. **Drive the node group's INTERFACE DEFAULT instead** (`rig.set_parameter`),
+  which only works because groups are per-strand. Both are written so 5.0/5.1
+  keep using the modifier value they honour.
+- **Multi-type nodes rebuild their sockets from `data_type`.** `Random Value`
+  exposes only the active variant in 5.2 (5.1 kept all of them, disabled), so
+  **set `data_type` before assigning Min/Max** or the sockets don't exist yet.
+- **MENU sockets take display-cased strings**: `'Count'` / `'Length'`, not
+  `'COUNT'`. Wrong case raises with the valid list, so this one fails loudly.
+- **`nodes.remove()` invalidates Python references to sibling nodes** in the
+  same tree. Fetch handles *after* removals, not before.
+- **Resample-by-length near zero locks Blender up** trying to make unbounded
+  points. The node tree hard-floors the spacing input; a user typing 0 must not
+  be able to hang the app.
+- `Material.use_nodes` is deprecated in 5.x (removal slated for 6.0) but still
+  needed for 5.0/5.1.
+
 ## Tests
 
 No framework, no CI — two headless scripts, both of which sandbox Blender so they never touch the real install:
@@ -129,10 +201,13 @@ No framework, no CI — two headless scripts, both of which sandbox Blender so t
 ```bash
 tests/run_registration_test.sh          # add "5.0" etc. for a specific Blender
 tests/run_update_install_test.sh
+tests/run_festoon_test.sh
 ```
 
 - **`run_registration_test.sh`** — every class/operator/panel/pref still resolves across a cold enable, the updater's in-session reload, and an `importlib.reload` over a live addon; plus a clean-teardown check and a static scan forbidding relative imports inside function bodies. Sandboxes `BLENDER_USER_SCRIPTS` and pins the auto-check flag so it never hits the network.
 - **`run_update_install_test.sh`** — drives the actual update install across both transitions (flat → restructured, restructured → restructured), asserting the install lands at the top level, orphans get cleaned, and backups capture the whole package. Sandboxes `BLENDER_USER_CONFIG` too, because the updater derives its staging and backup dirs from the config path; it refuses to run if it doesn't see itself sandboxed.
+
+- **`run_festoon_test.sh`** — builds real strands and inspects the evaluated geometry: the depth-peeling raycast skips hidden objects and festoon's own strands, the curve passes through the sag empty at every flatness, flatness broadens the bottom without moving the low point, bulb spacing responds, a parent move stays rigid, and each strand gets its own node group.
 
 The `EXPECTED_*` lists in `tests/test_registration.py` are a deliberate contract — when a change legitimately renames or moves something, edit them on purpose rather than letting them drift. Beyond these, real testing is still loading the addon in Blender against a curated test scene (`tests/build_test_scene.py`).
 

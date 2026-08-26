@@ -58,12 +58,17 @@ EXPECTED_OPERATORS = (
     "lightgroup.update_dialog",
     "lightgroup.restart_dialog",
     "lightgroup.close_dialog",
+    "festoon.place_strand",
+    "festoon.select_controls",
 )
 
-# NB: LightgroupToolsPreferences is deliberately absent. An AddonPreferences
-# subclass registers under its bl_idname (the module name), not its class name,
-# so it never appears in bpy.types under "LightgroupToolsPreferences". It is
-# checked separately via is_registered in assert_fully_registered().
+# NB: two registered classes are deliberately absent from this list because
+# neither appears in bpy.types under its class name:
+#   LightgroupToolsPreferences -- an AddonPreferences registers under its
+#     bl_idname (the module name) instead.
+#   FestoonSettings -- a PropertyGroup is reached through the ID property it
+#     is attached to.
+# Both are verified functionally in assert_fully_registered() instead.
 EXPECTED_CLASSES = (
     "LIGHTGROUP_OT_clear_all_lightgroups",
     "LIGHTGROUP_OT_create_for_each_light",
@@ -79,6 +84,10 @@ EXPECTED_CLASSES = (
     "LIGHTGROUP_PT_main_panel",
     "LIGHTGROUP_PT_compositor_panel",
     "LIGHTGROUP_PT_viewlayer_panel",
+    "FESTOON_OT_place_strand",
+    "FESTOON_OT_select_controls",
+    "FESTOON_PT_main_panel",
+    "FESTOON_PT_strand_panel",
 )
 
 # Panel placement is part of the contract too: the restructure must NOT move
@@ -88,6 +97,11 @@ EXPECTED_PANELS = {
     "LIGHTGROUP_PT_main_panel": ("VIEW_3D", "Lightgroups"),
     "LIGHTGROUP_PT_compositor_panel": ("NODE_EDITOR", "Lightgroups"),
     "LIGHTGROUP_PT_viewlayer_panel": ("PROPERTIES", None),
+    # Festoon Clicker is deliberately a SEPARATE tab. If these ever read
+    # 'Lightgroups', an unrelated building tool has leaked into the panel the
+    # team uses on every job.
+    "FESTOON_PT_main_panel": ("VIEW_3D", "Festoon Clicker"),
+    "FESTOON_PT_strand_panel": ("VIEW_3D", "Festoon Clicker"),
 }
 
 EXPECTED_PREF_PROPS = (
@@ -191,6 +205,22 @@ def assert_fully_registered(phase):
         check(updater.install_update_on_load in bpy.app.handlers.load_post,
               "[" + phase + "] install_update_on_load not registered on load_post")
 
+    # Festoon's scene PointerProperty is registered separately from the class
+    # list, after the classes, because it references FestoonSettings.
+    check(hasattr(bpy.types.Scene, "festoon_settings"),
+          "[" + phase + "] Scene.festoon_settings not registered")
+    scene = getattr(bpy.context, "scene", None)
+    if scene is not None:
+        settings = getattr(scene, "festoon_settings", None)
+        if check(settings is not None,
+                 "[" + phase + "] scene.festoon_settings does not resolve"):
+            check(type(settings).__name__ == "FestoonSettings",
+                  "[" + phase + "] festoon_settings is a "
+                  + type(settings).__name__ + ", expected FestoonSettings")
+            for field in ("sag_along", "sag_v_ratio", "flatness", "bulb_object"):
+                check(hasattr(settings, field),
+                      "[" + phase + "] festoon setting '" + field + "' missing")
+
 
 # --- Phase 1: cold enable ---------------------------------------------------
 
@@ -261,6 +291,8 @@ try:
               "[teardown] bpy.types." + cls_name + " still registered after disable")
     check(bpy.context.preferences.addons.get(ADDON) is None,
           "[teardown] addon still present in context.preferences.addons after disable")
+    check(not hasattr(bpy.types.Scene, "festoon_settings"),
+          "[teardown] Scene.festoon_settings leaked past unregister")
 except Exception as exc:  # noqa: BLE001
     FAILURES.append("[teardown] raised " + type(exc).__name__ + ": " + str(exc))
 
