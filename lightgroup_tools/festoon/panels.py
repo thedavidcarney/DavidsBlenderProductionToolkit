@@ -30,10 +30,12 @@ class FESTOON_PT_main_panel(bpy.types.Panel):
         box = layout.box()
         box.label(text="Click start, click end, set sag", icon='INFO')
         box.label(text="Scroll during sag = flatness")
+        box.label(text="Preview follows the cursor throughout")
 
         layout.separator()
         layout.label(text="New strands use:")
         layout.prop(settings, "bulb_object")
+        layout.prop(settings, "bulb_spacing")
         layout.prop(settings, "flatness", slider=True)
 
         strands = rig.strand_objects(context.scene)

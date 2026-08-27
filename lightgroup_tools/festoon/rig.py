@@ -212,7 +212,8 @@ def _make_empty(name, location, normal, collection, display_size):
 
 
 def create_strand(context, start, end, sag, flatness=1.0,
-                  start_normal=None, end_normal=None, bulb_object=None):
+                  start_normal=None, end_normal=None, bulb_object=None,
+                  bulb_spacing=None):
     """Build a complete strand. Returns the strand mesh object."""
     scene = context.scene
     collection = get_collection(scene)
@@ -253,6 +254,10 @@ def create_strand(context, start, end, sag, flatness=1.0,
 
     for input_name, value in nodes.NEW_STRAND_DEFAULTS.items():
         set_parameter(tree, modifier, input_name, value)
+    if bulb_spacing:
+        # Overrides the built-in default so the strand matches the spacing the
+        # placement preview just drew.
+        set_parameter(tree, modifier, "Bulb Spacing", bulb_spacing)
 
     set_strand_targets(tree,
                        start=start_empty,

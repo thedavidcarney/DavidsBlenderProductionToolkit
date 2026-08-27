@@ -371,6 +371,115 @@ check(abs(min(first_x) - min(second_x)) > 1.0,
       "were not set per strand")
 
 
+# --- 8. The placement preview must match what actually gets built -----------
+#
+# The overlay draws shape.curve_points(). The strand is built by the node
+# group. Those are two separate implementations of the same maths, and a
+# preview that quietly disagrees with the result is worse than no preview --
+# you would trust it and be wrong. This pins them together.
+#
+# (The GPU drawing itself can't be tested headlessly -- no GL context in
+# background mode -- so this checks the geometry the overlay would draw.)
+
+print("=== 8. preview curve matches generated geometry ===")
+reset_scene()
+
+start = Vector((-6.0, 1.0, 5.0))
+end = Vector((4.0, -2.0, 3.5))          # deliberately not axis-aligned
+sag = shape.default_sag_point(start, end)
+
+strand = rig.create_strand(bpy.context, start, end, sag, flatness=1.0)
+
+# Crank the cable resolution up for this comparison. The measurement is
+# "distance from a preview point to the nearest generated VERTEX", so at the
+# default 64 rings over an 11m curve, half a ring spacing (~0.09m) swamps any
+# real disagreement and the test would pass no matter how wrong the maths was.
+# At 256 the sampling floor drops to ~0.02m and the tolerance below actually
+# bites.
+_modifier = strand.modifiers[0]
+rig.set_parameter(_modifier.node_group, _modifier, "Curve Resolution", 256)
+bpy.context.view_layer.update()
+
+preview = shape.curve_points(start, end, sag, 1.0)
+check(len(preview) > 2, "[preview] curve_points returned nothing usable")
+check((preview[0] - start).length < 1e-5,
+      "[preview] curve does not start at the start point")
+check((preview[-1] - end).length < 1e-5,
+      "[preview] curve does not end at the end point")
+
+# The low point of the preview must sit on the sag empty, same property the
+# node group guarantees.
+closest = min(preview, key=lambda p: (p - sag).length)
+check((closest - sag).length < 0.15,
+      "[preview] curve does not pass through the sag point, nearest was "
+      + str(round((closest - sag).length, 4)) + "m away")
+
+# Now the real comparison: every sampled preview point should lie on the
+# generated cable, within a cable radius plus a little slack for the tube's
+# faceting.
+actual = evaluated_vertices(strand)
+if check(len(actual) > 0, "[preview] strand generated no geometry to compare"):
+    worst = 0.0
+    for index in range(0, len(preview), 4):
+        point = preview[index]
+        nearest = min((point - v).length for v in actual)
+        worst = max(worst, nearest)
+    print("    worst preview-to-geometry distance: %.4f m" % worst)
+    check(worst < 0.03,
+          "[preview] preview curve drifts from the built strand by "
+          + str(round(worst, 4)) + "m -- the overlay is lying about the result")
+
+# Flatness must move the preview the same way it moves the real curve.
+sag_empty = next(o for o in bpy.data.objects if o.name.endswith("_Sag"))
+for flatness in (0.3, 3.0):
+    sag_empty.scale = (flatness,) * 3
+    bpy.context.view_layer.update()
+    built = evaluated_vertices(strand)
+    predicted = shape.curve_points(start, end, sag, flatness)
+    worst = 0.0
+    for index in range(0, len(predicted), 4):
+        point = predicted[index]
+        worst = max(worst, min((point - v).length for v in built))
+    print("    flatness %-4s worst distance: %.4f m" % (flatness, worst))
+    check(worst < 0.03,
+          "[preview] preview and geometry disagree at flatness "
+          + str(flatness) + ": " + str(round(worst, 4)) + "m")
+sag_empty.scale = (1.0, 1.0, 1.0)
+
+
+# --- 9. Preview bulb spacing ------------------------------------------------
+
+print("=== 9. preview bulb spacing ===")
+
+curve = shape.curve_points(start, end, sag, 1.0)
+length = sum((curve[i + 1] - curve[i]).length for i in range(len(curve) - 1))
+
+for spacing in (1.0, 0.4):
+    points = shape.resample_polyline(curve, spacing)
+    expected = round(length / spacing) + 1
+    print("    spacing %-4s -> %d points (curve %.2fm, expected ~%d)"
+          % (spacing, len(points), length, expected))
+    check(abs(len(points) - expected) <= 1,
+          "[preview] resample count off for spacing " + str(spacing)
+          + ": got " + str(len(points)) + ", expected ~" + str(expected))
+    if len(points) > 2:
+        gaps = [(points[i + 1] - points[i]).length for i in range(len(points) - 1)]
+        spread = max(gaps) - min(gaps)
+        check(spread < spacing * 0.25,
+              "[preview] resampled points are unevenly spaced, spread "
+              + str(round(spread, 4)))
+        # Both ends must land on the curve -- no stub at one end.
+        check((points[0] - curve[0]).length < 1e-5,
+              "[preview] first resampled point is not at the curve start")
+        check((points[-1] - curve[-1]).length < 0.05,
+              "[preview] last resampled point is not at the curve end")
+
+check(shape.resample_polyline(curve, 0.0) == [],
+      "[preview] zero spacing should yield no points, not a hang")
+check(shape.resample_polyline([], 0.5) == [],
+      "[preview] empty polyline should yield no points")
+
+
 # --- Result -----------------------------------------------------------------
 
 print("\n" + "=" * 60)

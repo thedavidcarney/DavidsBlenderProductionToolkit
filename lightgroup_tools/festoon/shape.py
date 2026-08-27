@@ -36,6 +36,18 @@ MAX_FLATNESS = 4.0
 
 DEGENERATE = 1e-6
 
+# Sag empty scale -> shape exponent. Scale 1.0 lands on a catenary-ish 2.2.
+# Lives here rather than in nodes.py so the viewport preview and the node group
+# cannot drift apart -- a preview that lies about the result is worse than no
+# preview.
+FLATNESS_TO_EXPONENT = 2.2
+EXPONENT_MIN = 1.0
+EXPONENT_MAX = 8.0
+
+
+def flatness_to_exponent(flatness):
+    return max(EXPONENT_MIN, min(EXPONENT_MAX, flatness * FLATNESS_TO_EXPONENT))
+
 
 def chord_frame(start, end):
     """Return (u, v, w, span), or None if the endpoints coincide."""
@@ -128,3 +140,83 @@ def evaluate_shape(t, along, exponent):
     denominator = along if t < along else (1.0 - along)
     ratio = min(1.0, abs(t - along) / max(denominator, 1e-4))
     return 1.0 - math.pow(ratio, exponent)
+
+
+def sag_along(start, end, sag_point):
+    """Where the sag empty sits along the chord, clamped off the ends.
+
+    Matches the clamp inside the node group. Past the ends the shape function
+    divides by ~zero and the curve blows up.
+    """
+    frame = chord_frame(start, end)
+    if frame is None:
+        return 0.5
+    u, _v, _w, span = frame
+    raw = (Vector(sag_point) - Vector(start)).dot(u) / span
+    return max(0.02, min(0.98, raw))
+
+
+def curve_points(start, end, sag_point, flatness, segments=64):
+    """The strand curve as a polyline, in world space.
+
+    The same maths the node group runs, so the placement preview shows what
+    you will actually get rather than an approximation of it.
+    """
+    start = Vector(start)
+    end = Vector(end)
+    sag_point = Vector(sag_point)
+
+    frame = chord_frame(start, end)
+    if frame is None:
+        return [start, end]
+
+    u, _v, _w, span = frame
+    along = sag_along(start, end, sag_point)
+    offset = sag_point - (start + u * (along * span))
+    exponent = flatness_to_exponent(flatness)
+
+    points = []
+    for index in range(segments + 1):
+        t = index / segments
+        points.append(start.lerp(end, t) + offset * evaluate_shape(t, along, exponent))
+    return points
+
+
+def resample_polyline(points, spacing):
+    """Evenly spaced points along a polyline.
+
+    Mirrors Blender's resample-by-length closely enough for a preview: the
+    requested spacing sets the count, then the points are redistributed evenly
+    so both ends land on the curve instead of leaving a stub.
+    """
+    if len(points) < 2 or spacing <= 0.0:
+        return []
+
+    segment_lengths = [(points[i + 1] - points[i]).length
+                       for i in range(len(points) - 1)]
+    total = sum(segment_lengths)
+    if total <= 0.0:
+        return []
+
+    count = max(2, int(round(total / spacing)) + 1)
+    step = total / (count - 1)
+
+    result = [points[0].copy()]
+    target = step
+    travelled = 0.0
+    index = 0
+    while index < len(segment_lengths) and len(result) < count:
+        length = segment_lengths[index]
+        if length <= 0.0:
+            index += 1
+            continue
+        while target <= travelled + length and len(result) < count:
+            factor = (target - travelled) / length
+            result.append(points[index].lerp(points[index + 1], factor))
+            target += step
+        travelled += length
+        index += 1
+
+    if len(result) < count:
+        result.append(points[-1].copy())
+    return result

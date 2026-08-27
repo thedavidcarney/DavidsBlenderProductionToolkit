@@ -12,6 +12,7 @@ import bpy
 from mathutils import Vector
 
 from . import rig, shape
+from .overlay import PlacementOverlay
 from .picking import pick, point_on_plane
 
 STAGE_START = 'START'
@@ -42,6 +43,9 @@ class FestoonSettings(bpy.types.PropertyGroup):
     bulb_object: bpy.props.PointerProperty(
         name="Bulb", type=bpy.types.Object,
         description="Object instanced along the cable. Leave empty to use the built-in stand-in")
+    bulb_spacing: bpy.props.FloatProperty(
+        name="Bulb Spacing", default=0.5, min=0.01, max=100.0, unit='LENGTH',
+        description="Distance between bulbs on new strands. Also drives the placement preview")
 
 
 class FESTOON_OT_place_strand(bpy.types.Operator):
@@ -111,6 +115,7 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
             start_normal=self.start_normal,
             end_normal=self.end_normal,
             bulb_object=settings.bulb_object,
+            bulb_spacing=settings.bulb_spacing,
         )
 
         # Remember the shape for the next strand.
@@ -132,10 +137,17 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
         self.start_normal = None
         self.end_normal = None
         self.sag = None
+        self.hover = None
 
     def _finish(self, context):
+        # cancel() can fire before invoke() finished wiring things up.
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None:
+            overlay.disable()
         context.area.header_text_set(None)
         context.window.cursor_modal_restore()
+        if context.area is not None:
+            context.area.tag_redraw()
         if self.placed:
             self.report({'INFO'}, "Placed %d festoon strand%s"
                         % (self.placed, "" if self.placed == 1 else "s"))
@@ -153,7 +165,15 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
         self.sag_v = settings.sag_v_ratio
         self.sag_w = settings.sag_w_ratio
         self.flatness = settings.flatness
+        self.bulb_spacing = settings.bulb_spacing
         self._reset()
+
+        # The overlay reads this operator's state directly each redraw, so
+        # there's nothing to keep in sync -- it always shows current values.
+        self.overlay = PlacementOverlay(self)
+        if not self.overlay.enable(context):
+            self.report({'WARNING'},
+                        "Viewport preview unavailable; placing without it")
 
         context.window.cursor_modal_set('CROSSHAIR')
         self._header(context)
@@ -177,12 +197,19 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
             step = FLATNESS_STEP if event.type == 'WHEELUPMOUSE' else -FLATNESS_STEP
             self.flatness = shape.clamp_flatness(self.flatness + step)
             self._header(context)
+            self.overlay.tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'MOUSEMOVE':
             if self.stage == STAGE_SAG:
                 self.sag = self._pick_sag(context, event)
                 self._header(context)
+            else:
+                # Snap the marker to the surface under the cursor, so the
+                # preview shows the point that would actually be committed --
+                # including the depth-peel past anything hidden.
+                self.hover = self._pick_surface(context, event).location
+            self.overlay.tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
@@ -212,6 +239,7 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
                 self._reset()
 
             self._header(context)
+            self.overlay.tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         return {'RUNNING_MODAL'}

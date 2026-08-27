@@ -5,6 +5,7 @@ Its own sidebar tab ('Festoon Clicker'), separate from Lightgroups.
 Module map:
     picking.py    visibility-aware viewport raycasting
     shape.py      chord-frame maths and the sag shape function
+    overlay.py    viewport preview drawn during placement
     nodes.py      builds the Festoon Strand geometry node group
     rig.py        creates the strand mesh, empties and collection
     operators.py  the modal placement operator
@@ -17,6 +18,7 @@ these submodules BEFORE reloading this package.
 from . import nodes
 from . import picking
 from . import shape
+from . import overlay
 from . import rig
 from . import operators
 from . import panels

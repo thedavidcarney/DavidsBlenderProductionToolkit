@@ -48,6 +48,7 @@ if "core" in locals():
     # first: picking and shape are leaves, nodes feeds rig, rig feeds operators.
     importlib.reload(festoon.picking)
     importlib.reload(festoon.shape)
+    importlib.reload(festoon.overlay)
     importlib.reload(festoon.nodes)
     importlib.reload(festoon.rig)
     importlib.reload(festoon.operators)

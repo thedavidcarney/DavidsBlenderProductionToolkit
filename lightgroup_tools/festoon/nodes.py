@@ -45,6 +45,8 @@ import math
 
 import bpy
 
+from .shape import EXPONENT_MAX, EXPONENT_MIN, FLATNESS_TO_EXPONENT
+
 GROUP_BASE_NAME = "Festoon Strand v1"
 
 # Node names used to find the datablock-carrying nodes after the group is
@@ -55,10 +57,8 @@ NODE_SAG_INFO = "Festoon Sag Info"
 NODE_BULB_INFO = "Festoon Bulb Info"
 NODE_CABLE_MATERIAL = "Festoon Cable Material"
 
-# Sag empty scale -> shape exponent. Scale 1.0 lands on a catenary-ish 2.2.
-FLATNESS_TO_EXPONENT = 2.2
-EXPONENT_MIN = 1.0
-EXPONENT_MAX = 8.0
+# FLATNESS_TO_EXPONENT / EXPONENT_MIN / EXPONENT_MAX are imported from shape.py
+# so the node group and the viewport preview use identical numbers.
 
 # Full-strength random tilt, in degrees, when Random Tilt is 1.0.
 MAX_RANDOM_TILT_DEGREES = 25.0
