@@ -265,6 +265,38 @@ except Exception as exc:  # noqa: BLE001
                     + type(exc).__name__ + ": " + str(exc))
 
 
+# --- Transition C: refuse to install over a git checkout --------------------
+#
+# During development the installed addon folder is a junction to the repo, and
+# the updater resolves through it with realpath. Without a guard, hitting
+# "Download Update" would overwrite tracked source with release contents and
+# "back up" the working tree into the config dir -- uncommitted work gone.
+
+print("")
+print("=== transition C: refuse to install into a git checkout ===")
+
+installed_dir = addon_dir()
+fake_git = os.path.join(os.path.dirname(installed_dir), ".git")
+os.makedirs(fake_git, exist_ok=True)
+
+before_c = tree(installed_dir)
+staged = stage_update("1.0.18")
+run_install()
+after_c = tree(installed_dir)
+
+check(after_c == before_c,
+      "[C] addon directory was modified despite living in a git checkout")
+check(os.path.isdir(staged),
+      "[C] staged update was discarded; it should survive for a real install")
+
+prefs_c = bpy.context.preferences.addons[ADDON].preferences
+check(prefs_c.update_downloaded,
+      "[C] update_downloaded was cleared, so the refused update is now lost")
+
+shutil.rmtree(fake_git, ignore_errors=True)
+print("    refused correctly, addon directory untouched")
+
+
 # --- Result -----------------------------------------------------------------
 
 print("\n" + "=" * 60)

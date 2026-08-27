@@ -285,6 +285,24 @@ def install_update_on_load(dummy):
             if not addon_dir or not os.path.isdir(addon_dir):
                 print("Lightgroup Tools: Could not resolve the addon directory; aborting install")
                 return
+
+            # Refuse to install over a git checkout.
+            #
+            # During development the installed addon folder is a JUNCTION to the
+            # repo. os.path.realpath above follows it, so addon_dir lands on the
+            # working tree -- and an install would overwrite tracked source with
+            # release contents and "back up" the repo into the config dir.
+            # Uncommitted work would be gone.
+            #
+            # The staged update is deliberately left in place rather than
+            # discarded, so a normal (non-junctioned) install picks it up later.
+            if os.path.isdir(os.path.join(os.path.dirname(addon_dir), ".git")):
+                print("Lightgroup Tools: Addon directory is inside a git checkout "
+                      f"({addon_dir}) -- refusing to install over it.")
+                print("Lightgroup Tools: This is a dev junction. Replace it with a "
+                      "real installed copy before updating.")
+                return
+
             print(f"Lightgroup Tools: Installing to: {addon_dir}")
 
             update_base_dir = _get_update_dir()

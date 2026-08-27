@@ -15,6 +15,7 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 └── festoon/               the 'Festoon Clicker' sidebar tab
     ├── picking.py         visibility-aware viewport raycasting
     ├── shape.py           chord-frame maths + the sag shape function
+    ├── overlay.py         viewport preview drawn during placement
     ├── nodes.py           builds the Festoon Strand node group
     ├── rig.py             strand mesh, empties, collection
     ├── operators.py       modal placement
@@ -100,11 +101,20 @@ Release process:
 
 **When David does call for a release, still provide the release message ready to copy-paste.** He cuts the release in the GitHub web UI, so he needs that one string: **one short line** listing the additions. Nobody reads the release notes — don't write prose, don't write sections, don't explain the why. Same terse register as the commit message, just enumerating what's new.
 
+**Dev install: the Blender 5.2 addon folder is a JUNCTION to this repo**, so edits go live on a Blender restart with no zip and no release. Recreate it (PowerShell) with:
+
+```bash
+$dest = "$env:APPDATA\Blender Foundation\Blender\5.2\scripts\addons\lightgroup_tools"; if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Junction -Path $dest -Target "C:\Users\User\Documents\GitHub\DavidsBlenderProductionToolkit\lightgroup_tools"
+```
+
+Two consequences worth remembering. David's production Lightgroups tab now tracks the repo working tree, so **keep `main` runnable**. And before cutting a release the junction has to be replaced with a real installed copy — the updater overwrites the addon directory, and pointing that at the repo would have it writing into the git working tree.
+
 No CI. Blender addons are ultimately tested by loading them in Blender — but `tests/run_registration_test.sh` runs a headless registration/reload regression check against any installed Blender version, and should be green before any release.
 
 ## Updater quirks worth knowing
 
 - **`addon_dir` must come from the package module, never from `__file__`.** `install_update_on_load` resolves it as `os.path.dirname(os.path.realpath(sys.modules[addon_name].__file__))`. Using this file's own `__file__` was correct only while `updater.py` sat at the top level — from `core/` it points one level too deep, and the updater would install the new build *inside* `core/` and back up only `core/`. Note this bug is invisible on the upgrade that introduces a restructure (the OLD updater performs that install) and only bites on the NEXT one. `tests/run_update_install_test.sh` covers both transitions for exactly this reason.
+- **The installer refuses to write into a git checkout.** `install_update_on_load` resolves `addon_dir` through `os.path.realpath`, which FOLLOWS the dev junction into the repo -- an install would have overwritten tracked source with release contents and "backed up" the working tree into the config dir. It now bails if `.git` sits beside the resolved addon dir, leaving the staged update in place for a real install later. Covered by transition C in `tests/run_update_install_test.sh`.
 - **Files dropped between versions are never deleted.** The copy loop only overwrites paths present in the new build, so a module removed in a release lingers forever in existing installs. `install_update_on_load` carries an explicit orphan list (`updater.py`, `operators.py` from the pre-restructure layout) rather than a general mirror-the-staged-tree pass — a delete-what's-missing sweep could wipe a live install if a staged build were ever partial. Add to that list when a future refactor removes a module. **Cleanup lands one release late**: the installer can only run cleanup logic it already has, so the flat modules survive the v1.0.15 → v1.0.16 upgrade and disappear on the one after. They're inert in the meantime.
 - **Every addon preference resets after the in-session reload.** `update_just_installed`, `last_installed_version`, `backup_available` and `backup_version` all read back as defaults once `install_update_on_load` finishes its `addon_disable` → `addon_enable` cycle, so the "update installed" banner and the "Restore Previous Version" button are both missing for the rest of that session. `save_userpref()` runs first, so the values are on disk and return after a restart — which is why it went unnoticed. **Pre-existing, present in v1.0.15 too.** `tests/test_update_install.py` deliberately asserts the buggy behaviour so the suite stays green; fixing it will trip that assertion on purpose.
 
@@ -150,6 +160,12 @@ at both ends and exactly 1 at the sag empty, so **the curve passes through the
 empty at any `p`** — position and flatness never fight. `p` comes from the sag
 empty's SCALE: 1 is a sharp V, ~2.2 reads as a catenary, 5-6 is a flat-bottomed
 swag. Not length-conserving: moving an endpoint leaves the sag where you put it.
+
+**Placement draws a live preview.** `overlay.py` adds a `POST_VIEW` draw handler for the duration of the operator: a cursor marker snapped to the surface under the mouse (so you see where a click lands *before* committing to it), the placed anchors, the straight chord for reference, the actual sag curve, and bulb positions along it. Depth test off, so it isn't hidden behind the truss you're hanging from.
+
+The preview calls `shape.curve_points()` — a second implementation of the maths the node group runs. To stop the two drifting, `FLATNESS_TO_EXPONENT` and friends live in `shape.py` and `nodes.py` imports them, and a test pins the preview curve to the generated geometry to within vertex-sampling precision (0.022m measured against a 0.0218m sampling floor). A preview that quietly disagrees with the result is worse than no preview.
+
+Drawing is best-effort: any GPU error disables the overlay and lets placement continue rather than taking the operator down mid-strand. GPU shaders can't be exercised headlessly (no GL context in background mode), so the drawing itself is verified by eye — the geometry it *would* draw is what's under test.
 
 **Bulbs are instanced, uniform scale, no size randomness** — real bulbs are
 manufactured identical. Rotation randomness (tilt + spin) is wanted and is
