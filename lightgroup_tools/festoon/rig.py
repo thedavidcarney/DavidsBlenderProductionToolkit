@@ -489,6 +489,72 @@ def strand_node(strand, node_name):
     return modifier.node_group.nodes.get(node_name)
 
 
+def estimate_trunk_axis(target, base, base_normal, top, top_normal):
+    """Find the axis and radius of the thing being wrapped, from the clicks.
+
+    Returns (centre_base, centre_top, radius).
+
+    Everything here used to come off the target's BOUNDING BOX, which is fine
+    for a bare column and useless for a tree: a birch is 7x8m across its canopy
+    and 0.15m across its trunk. Sizing from the box gave a ~4m fallback radius
+    and a ~18m search radius, so rays started outside the canopy and struck
+    leaves and branches long before the trunk -- the wrap ended up out in the
+    foliage.
+
+    Instead, use what the user actually pointed at. Each click lands on the
+    surface with a known outward normal, so firing a ray straight back INTO the
+    surface finds the far wall: the midpoint is the local centre and half the
+    span is the local radius. That measures the trunk at the two heights the
+    user chose and ignores the canopy entirely.
+
+    Falls back to the clicked points if the object has no far wall to hit
+    (a plane, an open shell), which just reproduces the old behaviour rather
+    than failing.
+    """
+    base = Vector(base)
+    top = Vector(top)
+    default_radius = 0.25
+
+    if target is None or target.type != 'MESH':
+        return base, top, default_radius
+
+    to_local = target.matrix_world.inverted()
+    normal_to_local = to_local.to_3x3()
+
+    def probe(point, normal):
+        """Centre and radius of the object along the inward normal at `point`."""
+        if normal is None or normal.length < 1e-6:
+            return None, None
+        inward = -Vector(normal).normalized()
+        local_origin = to_local @ point
+        local_direction = (normal_to_local @ inward).normalized()
+        # Step inside first, or the ray re-hits the face it started on.
+        local_origin = local_origin + local_direction * 1e-4
+        hit, location, _n, _index = target.ray_cast(local_origin, local_direction)
+        if not hit:
+            return None, None
+        far_side = target.matrix_world @ location
+        span = (far_side - point).length
+        if span < 1e-5:
+            return None, None
+        return (point + far_side) * 0.5, span * 0.5
+
+    base_centre, base_radius = probe(base, base_normal)
+    top_centre, top_radius = probe(top, top_normal)
+
+    # If only one end could be measured, use its radius for both -- a single
+    # good measurement still beats the bounding box.
+    radii = [r for r in (base_radius, top_radius) if r]
+    radius = sum(radii) / len(radii) if radii else default_radius
+
+    if base_centre is None or top_centre is None:
+        # Nothing usable: keep the clicked line but at least report a sane
+        # radius, so the fallback and preview aren't canopy-sized.
+        return base, top, radius
+
+    return base_centre, top_centre, radius
+
+
 def _centre_axis_on(target, base, top):
     """Slide the clicked axis onto the target's centre line.
 
@@ -520,7 +586,8 @@ def _centre_axis_on(target, base, top):
 
 
 def create_spiral(context, base, top, target, bulb_object=None,
-                  bulb_collection=None, bulb_spacing=None, turns=None):
+                  bulb_collection=None, bulb_spacing=None, turns=None,
+                  base_normal=None, top_normal=None):
     """Wrap a light string around an object.
 
     Two clicks give the base and the top; the object hit by the first click is
@@ -532,7 +599,16 @@ def create_spiral(context, base, top, target, bulb_object=None,
     collection = get_collection(scene)
     tree = nodes.create_group(mode=nodes.MODE_SPIRAL)
 
-    base, top = _centre_axis_on(target, base, top)
+    # Measure the trunk at the two clicked heights. Falls back to centring on
+    # the bounding box when there are no normals to probe with, which is the
+    # case for direct calls from tests.
+    if base_normal is not None or top_normal is not None:
+        base, top, trunk_radius = estimate_trunk_axis(target, base, base_normal,
+                                                      top, top_normal)
+    else:
+        base, top = _centre_axis_on(target, base, top)
+        trunk_radius = None
+
     height = (Vector(top) - Vector(base)).length
     display_size = max(0.05, min(0.5, height * 0.05))
 
@@ -563,15 +639,19 @@ def create_spiral(context, base, top, target, bulb_object=None,
     # A search radius that doesn't clear the object leaves every ray starting
     # inside it, and the whole helix collapses onto the axis. Size it from what
     # is actually being wrapped.
-    if target is not None:
-        radius = max(target.dimensions) if any(target.dimensions) else 1.0
-        defaults["Search Radius"] = max(0.5, radius * 1.5)
-        # Where a ray finds nothing -- above the object, or across a gap -- the
-        # string sits at roughly the object's own girth instead of collapsing
-        # onto the axis.
+    if trunk_radius is None and target is not None:
+        # No normals to probe with. Bounding box is a poor proxy -- see
+        # estimate_trunk_axis -- but it is better than nothing.
         cross_section = [d for d in (target.dimensions[0], target.dimensions[1]) if d]
         if cross_section:
-            defaults["Fallback Radius"] = max(0.02, sum(cross_section) / len(cross_section) / 2.0)
+            trunk_radius = max(0.02, sum(cross_section) / len(cross_section) / 2.0)
+
+    if trunk_radius:
+        # Start the rays just outside the trunk, NOT outside the whole object.
+        # On a tree, a ray fired from beyond the canopy hits leaves and
+        # branches long before it reaches the trunk.
+        defaults["Search Radius"] = max(0.05, trunk_radius * 3.0)
+        defaults["Fallback Radius"] = trunk_radius
 
     for input_name, value in defaults.items():
         set_parameter(tree, modifier, input_name, value)

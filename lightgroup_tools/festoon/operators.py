@@ -334,6 +334,8 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
         self.turns = max(MIN_WRAPS, min(MAX_WRAPS, settings.spiral_turns))
         self.base = None
         self.top = None
+        self.base_normal = None
+        self.top_normal = None
         self.target = None
         self.hover = None
         self.turns_preview = None
@@ -400,6 +402,7 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
                     self.report({'WARNING'}, "Click ON the object you want to wrap")
                     return {'RUNNING_MODAL'}
                 self.base = hit.location
+                self.base_normal = hit.normal
                 self.target = hit.object
                 self.start = hit.location
 
@@ -408,14 +411,17 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
                     self.report({'WARNING'}, "Base and top are the same point")
                     return {'RUNNING_MODAL'}
                 self.top = hit.location
-                # Nominal radius for the preview helix, from the object's own
-                # girth. The real wrap is raycast onto the surface; this is
-                # only here to make turn density readable while dragging.
-                if self.target is not None:
-                    spread = [d for d in (self.target.dimensions[0],
-                                          self.target.dimensions[1]) if d]
-                    if spread:
-                        self.preview_radius = max(0.02, sum(spread) / len(spread) / 2.0)
+                self.top_normal = hit.normal
+                # Preview radius measured from the trunk itself, not the
+                # object's bounding box -- on a tree those differ by a factor
+                # of twenty and the preview came out canopy-sized.
+                axis_base, axis_top, radius = rig.estimate_trunk_axis(
+                    self.target, self.base, self.base_normal,
+                    self.top, self.top_normal)
+                self.base = axis_base
+                self.top = axis_top
+                self.start = axis_base
+                self.preview_radius = max(0.02, radius)
                 self._wrap_anchor_y = event.mouse_region_y
                 self._wrap_at_anchor = self.turns
                 self._refresh_preview()
@@ -426,12 +432,16 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
                                   bulb_object=settings.bulb_object,
                                   bulb_collection=settings.bulb_collection,
                                   bulb_spacing=settings.bulb_spacing,
-                                  turns=self.turns)
+                                  turns=self.turns,
+                                  base_normal=self.base_normal,
+                                  top_normal=self.top_normal)
                 settings.spiral_turns = self.turns
                 self.placed += 1
                 bpy.ops.ed.undo_push(message="Wrap Object")
                 self.base = None
                 self.top = None
+                self.base_normal = None
+                self.top_normal = None
                 self.target = None
                 self.start = None
                 self.turns_preview = None

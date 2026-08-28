@@ -686,16 +686,28 @@ def create_group(mode=MODE_STRAND):
     # variants -- while a quick stand-in is a single object. Rather than make
     # the user pick a mode, both sockets exist and whichever is filled
     # contributes. Setting neither yields cable with no bulbs.
+    # ORIGINAL, not RELATIVE.
+    #
+    # RELATIVE delivers the source's geometry transformed into the strand's
+    # space, which bakes the source's world position into the instance. The
+    # bulbs then sit at an offset from the cable, and moving the strand makes
+    # that offset change -- the bulbs visibly fly off. It looked fine only
+    # while both the strand and the bulb collection sat at the origin.
+    #
+    # For instancing you want the source's own local geometry, centred on its
+    # own origin, which is what ORIGINAL gives. The empties keep RELATIVE,
+    # because there the point IS the position relative to the strand.
     bulb_source = tree.nodes.new("GeometryNodeObjectInfo")
     bulb_source.name = NODE_BULB_INFO
     bulb_source.label = "Bulb object"
-    bulb_source.transform_space = 'RELATIVE'
+    bulb_source.transform_space = 'ORIGINAL'
     bulb_source.inputs["As Instance"].default_value = True
 
     bulb_collection = tree.nodes.new("GeometryNodeCollectionInfo")
     bulb_collection.name = NODE_BULB_COLLECTION
     bulb_collection.label = "Bulb collection"
-    bulb_collection.transform_space = 'RELATIVE'
+    # ORIGINAL for the same reason as the bulb object above.
+    bulb_collection.transform_space = 'ORIGINAL'
     # Separate Children off: the whole collection is ONE bulb. On, every object
     # in it would become its own bulb strung along the cable.
     bulb_collection.inputs["Separate Children"].default_value = False

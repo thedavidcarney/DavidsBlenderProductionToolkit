@@ -211,6 +211,22 @@ one. The overlay draws a nominal-radius helix while dragging so the density is
 readable; it is deliberately NOT the shrinkwrapped result, which would need a
 raycast per point on every mouse move.
 
+**The wrap is sized by PROBING what you clicked, never from the bounding box.**
+`estimate_trunk_axis` fires a ray back into the surface at each click, along the
+inward normal: the far wall gives the local centre (midpoint) and the local
+radius (half the span). Both the axis and the radius come from that.
+
+This exists because bounding boxes are catastrophic on a real tree. A birch is
+~7x8m across its canopy and ~0.3m across its trunk, so box-derived numbers gave
+a ~4m fallback radius and a ~18m search radius — rays started outside the
+foliage and hit leaves and branches long before the trunk, and the wrap ended up
+out in the canopy. Probing the click gives 0.159m on the same tree, a search
+radius of 0.478m, and a wrap that hugs the trunk.
+
+Consequence worth knowing: the probe measures whatever the click LANDED on. Click
+a spot where foliage overlaps the trunk and it measures foliage. Click visible
+trunk.
+
 **Rays only accept NEAR-side hits.** The ray is fired from `Search Radius` out
 and travels twice that, so it passes through the axis and can strike the back
 of the object — the point then lands diametrically opposite where it belongs
@@ -255,6 +271,16 @@ because of a three-way squeeze: the modifier input can't be written from Python
 applies, and an *empty* Material socket CLEARS the material rather than leaving
 it alone — so the override can't simply be wired straight in. The default lives
 on the Switch's False socket, which is a plain node socket and does work.
+
+**Bulb sources are instanced in ORIGINAL space, the empties in RELATIVE.** The
+distinction is load-bearing. RELATIVE delivers a source's geometry transformed
+into the strand's space, which bakes the source's world position into the
+instance — the bulbs then sit offset from the cable, and moving the strand
+changes that offset so they visibly fly off. For instancing you want the
+source's own local geometry, which is ORIGINAL. For the control empties the
+point genuinely IS their position relative to the strand, so those stay
+RELATIVE. The bug hid while the strand and the bulb collection both sat at the
+origin.
 
 **Bulbs are instanced, uniform scale, no size randomness** — real bulbs are
 manufactured identical. Rotation randomness (tilt + spin) is wanted and is

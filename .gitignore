@@ -5,3 +5,8 @@
 # path, where Python can prefer a cached .pyc over the new source.
 __pycache__/
 *.pyc
+
+# Test fixtures that are too large to track. tests/tree.blend is a real tree
+# asset kept locally for spiral testing; the suite uses a synthetic stand-in so
+# it stays self-contained.
+tests/*.blend

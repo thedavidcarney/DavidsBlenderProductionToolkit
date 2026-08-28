@@ -1211,6 +1211,162 @@ if check(points, "[spiral] overrunning wrap produced no geometry"):
               + "). That collapse is the vertical spike.")
 
 
+# --- 19. Bulbs must ride along when the strand is moved ---------------------
+#
+# The bulb source was instanced with Object/Collection Info in RELATIVE space,
+# which delivers the source's geometry transformed into the STRAND's space --
+# baking the source's world position into the instance. Grab the strand and the
+# baked offset changes, so the bulbs visibly fly off the cable. It looked
+# correct only while the strand and the bulb collection both sat at the origin.
+
+print("=== 19. bulbs follow the strand ===")
+reset_scene()
+
+move_start, move_end = Vector((-4.0, 0.0, 3.0)), Vector((4.0, 0.0, 3.0))
+mover = rig.create_strand(bpy.context, move_start, move_end,
+                          shape.default_sag_point(move_start, move_end))
+bpy.context.view_layer.update()
+
+
+def cable_centroid(obj):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(depsgraph)
+    if evaluated.data is None or not evaluated.data.vertices:
+        return None
+    points = [evaluated.matrix_world @ v.co for v in evaluated.data.vertices]
+    return sum(points, Vector()) / len(points)
+
+
+def bulb_centroid(obj):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(depsgraph)
+    points = [i.matrix_world.translation.copy()
+              for i in depsgraph.object_instances
+              if i.is_instance and i.parent == evaluated]
+    return (sum(points, Vector()) / len(points)) if points else None
+
+
+cable_before = cable_centroid(mover)
+bulbs_before = bulb_centroid(mover)
+
+if check(cable_before is not None and bulbs_before is not None,
+         "[move] no cable or bulbs to measure"):
+    # Bulbs should sit ON the cable to begin with, not beside it.
+    check((bulbs_before - cable_before).length < 1.0,
+          "[move] bulbs are not on the cable to start with: centroids "
+          + str(round((bulbs_before - cable_before).length, 3)) + "m apart")
+
+    mover.location = (10.0, -4.0, 2.0)
+    bpy.context.view_layer.update()
+
+    cable_after = cable_centroid(mover)
+    bulbs_after = bulb_centroid(mover)
+    cable_delta = cable_after - cable_before
+    bulb_delta = bulbs_after - bulbs_before
+    print("    cable moved " + str(tuple(round(c, 3) for c in cable_delta)))
+    print("    bulbs moved " + str(tuple(round(c, 3) for c in bulb_delta)))
+
+    check((bulb_delta - cable_delta).length < 0.01,
+          "[move] bulbs did not travel with the cable: cable moved "
+          + str(tuple(round(c, 2) for c in cable_delta)) + " but bulbs moved "
+          + str(tuple(round(c, 2) for c in bulb_delta))
+          + " -- the bulb source is being instanced in RELATIVE space")
+
+
+# --- 20. Wrapping a thin trunk inside a wide canopy -------------------------
+#
+# The case that broke on a real tree. Sizing the wrap from the target's
+# BOUNDING BOX is fine for a bare column and useless here: a birch is metres
+# across its canopy and centimetres across its trunk, so the search radius
+# started rays outside the foliage (they hit leaves, not trunk) and the
+# fallback radius was canopy-sized. Everything is now measured by probing
+# through the clicked surface instead.
+
+print("=== 20. wrapping a thin trunk under a wide canopy ===")
+reset_scene()
+
+TRUNK_RADIUS = 0.15
+
+# Trunk and canopy in ONE bmesh, the way a real tree asset arrives: a single
+# object whose bounding box is all canopy and whose clickable trunk is thin.
+#
+# The canopy sits well ABOVE both click heights on purpose. If it overlapped
+# them the clicks would land on foliage rather than trunk, and the test would
+# be measuring a mistake of its own making rather than the code.
+tree_mesh = bpy.data.meshes.new("FakeTree")
+combined = bmesh.new()
+trunk = bmesh.ops.create_cone(combined, cap_ends=True, segments=16,
+                              radius1=TRUNK_RADIUS, radius2=TRUNK_RADIUS,
+                              depth=6.0)
+for vert in trunk["verts"]:
+    vert.co.z += 3.0            # trunk spans z 0..6
+sphere = bmesh.ops.create_uvsphere(combined, u_segments=16, v_segments=8,
+                                   radius=2.5)
+for vert in sphere["verts"]:
+    vert.co.z += 7.0            # canopy spans z 4.5..9.5
+combined.to_mesh(tree_mesh)
+combined.free()
+
+fake_tree = bpy.data.objects.new("FakeTree", tree_mesh)
+bpy.context.scene.collection.objects.link(fake_tree)
+bpy.context.view_layer.update()
+
+print("    object dimensions: "
+      + str(tuple(round(d, 2) for d in fake_tree.dimensions)))
+check(max(fake_tree.dimensions) > 10 * TRUNK_RADIUS,
+      "[trunk] the fixture isn't canopy-dominated, so it can't catch the bug")
+
+
+def click_trunk(height):
+    """Simulate clicking the trunk surface from the side."""
+    origin = Vector((3.0, 0.0, height))
+    return picking.ray_cast_visible(bpy.context, origin, Vector((-1.0, 0.0, 0.0)))
+
+
+low = click_trunk(1.0)
+high = click_trunk(3.0)
+
+if check(low is not None and high is not None,
+         "[trunk] could not find the trunk surface to click"):
+    axis_low, axis_high, radius = rig.estimate_trunk_axis(
+        fake_tree, low.location, low.normal, high.location, high.normal)
+    print("    probed trunk radius: %.4f (actual %.2f)" % (radius, TRUNK_RADIUS))
+    check(abs(radius - TRUNK_RADIUS) < 0.05,
+          "[trunk] probe measured " + str(round(radius, 3))
+          + " but the trunk is " + str(TRUNK_RADIUS)
+          + " -- it is measuring the canopy, not what was clicked")
+
+    wrapped = rig.create_spiral(bpy.context, low.location, high.location,
+                                fake_tree, turns=5.0,
+                                base_normal=low.normal, top_normal=high.normal)
+    bpy.context.view_layer.update()
+    wrapped_tree = wrapped.modifiers[0].node_group
+
+    search = rig.get_parameter(wrapped_tree, "Search Radius")
+    fallback = rig.get_parameter(wrapped_tree, "Fallback Radius")
+    print("    search radius %.3f, fallback radius %.3f" % (search, fallback))
+    check(search < 1.0,
+          "[trunk] search radius " + str(round(search, 2))
+          + " starts rays outside the canopy; they will hit foliage, not trunk")
+    check(fallback < 0.5,
+          "[trunk] fallback radius " + str(round(fallback, 2))
+          + " is canopy-sized, so any missed ray flings the string outward")
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = wrapped.evaluated_get(depsgraph)
+    points = ([evaluated.matrix_world @ v.co for v in evaluated.data.vertices]
+              if evaluated.data else [])
+    if check(points, "[trunk] wrap produced no geometry"):
+        radii = [math.hypot(p.x - axis_low.x, p.y - axis_low.y) for p in points]
+        mean_radius = sum(radii) / len(radii)
+        print("    wrap radius from the axis: min %.3f mean %.3f max %.3f"
+              % (min(radii), mean_radius, max(radii)))
+        check(mean_radius < TRUNK_RADIUS * 3.0,
+              "[trunk] the wrap is out in the canopy: mean radius "
+              + str(round(mean_radius, 3)) + " against a "
+              + str(TRUNK_RADIUS) + " trunk")
+
+
 _VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
