@@ -17,11 +17,11 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
     ├── shape.py           chord-frame maths + the sag shape function
     ├── overlay.py         viewport preview drawn during placement
     ├── nodes.py           builds the Festoon Strand node group
-    ├── rig.py             strand mesh, empties, collection
-    └── assets/
-        └── marquee_bulb.blend   bundled default bulb
+    ├── rig.py             strand mesh, empties, collections
     ├── operators.py       modal placement
-    └── panels.py
+    ├── panels.py
+    └── assets/
+        └── marquee_bulb.blend   bundled default bulb (a collection)
 ```
 
 Each subpackage owns a `classes` tuple; `__init__.py` concatenates them. A new
