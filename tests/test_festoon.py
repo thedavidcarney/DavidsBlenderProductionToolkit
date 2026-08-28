@@ -622,29 +622,26 @@ check(before == after,
 
 # --- 11. Bulb base orientation ----------------------------------------------
 #
-# The bundled marquee bulb is modelled pointing along its local +Y and has to
-# hang down world -Z. The correction is NOT -90 degrees about X, which is the
-# obvious-looking answer: the asset's +Y already arrives at world +Z once
-# instanced, so it takes a 180 degree flip about X from there. That is measured
-# below rather than asserted from arithmetic, because the arithmetic version
-# was wrong and looked right.
+# The bundled marquee bulb needs a -90 degree rotation about X to hang.
 #
-# Each candidate gets a FRESH strand. Mutating one strand's parameters in place
-# does not re-evaluate on 5.2 (see rig.set_parameter), so an in-place loop
-# silently measures the first value over and over -- which is exactly how this
-# first appeared to pass.
+# Measured as "how far does the bulb geometry extend BELOW its attachment point
+# versus above" -- which is literally what hanging means, and what you see in
+# the viewport. An earlier version of this test measured a child object's local
+# +Y axis instead and confidently concluded 180 degrees, which is the wrong
+# quantity: the bulb is five child objects with their own transforms, so no
+# single child's axis represents which way the bulb points. It agreed with
+# itself and disagreed with reality.
 #
-# Measured on a named child object: instance ordering varies between
-# evaluations, so "the first instance" is a different part of the bulb each
-# run, and the bulb's meshes are origin-centred so centroids can't see rotation
-# either. The rotation basis of a pinned child is the only reading that works.
+# Each candidate gets a FRESH strand. Parameters only take effect at creation
+# on 5.2 (see rig.set_parameter), so an in-place loop measures the first value
+# over and over -- which is how the wrong answer looked consistent.
 
 print("=== 11. bulb base orientation ===")
 reset_scene()
 
 
-def bulb_facing(rotation, offset_y):
-    """Where the bulb asset's +Y ends up in world space, for a fresh strand."""
+def bulb_hang(rotation, offset_y):
+    """(below, above) extent of one bulb relative to its attachment point."""
     start = Vector((-4.0, offset_y, 3.0))
     end = Vector((4.0, offset_y, 3.0))
     strand = rig.create_strand(bpy.context, start, end,
@@ -652,62 +649,66 @@ def bulb_facing(rotation, offset_y):
     modifier = strand.modifiers[0]
     tree = modifier.node_group
     for name, value in (("Random Tilt", 0.0), ("Random Spin", 0.0),
-                        ("Bulb Spacing", 3.0), ("Bulb Rotation", rotation)):
+                        ("Bulb Spacing", 4.0), ("Bulb Rotation", rotation)):
         rig.set_parameter(tree, modifier, name, value)
     bpy.context.view_layer.update()
 
     depsgraph = bpy.context.evaluated_depsgraph_get()
     evaluated = strand.evaluated_get(depsgraph)
+    groups = {}
     for instance in depsgraph.object_instances:
-        if (instance.is_instance and instance.parent == evaluated
-                and instance.object is not None
-                and instance.object.name == "Metal"):
-            basis = instance.matrix_world.to_3x3()
-            return (basis @ Vector((0.0, 1.0, 0.0))).normalized()
-    return None
+        if not (instance.is_instance and instance.parent == evaluated):
+            continue
+        source = instance.object
+        if source is None or source.type != 'MESH' or source.hide_render:
+            continue
+        matrix = instance.matrix_world
+        origin = matrix.translation
+        key = (round(origin.x, 2), round(origin.y, 2), round(origin.z, 2))
+        groups.setdefault(key, []).extend(matrix @ v.co for v in source.data.vertices)
+
+    if not groups:
+        return None
+    key = sorted(groups)[len(groups) // 2]
+    points = groups[key]
+    attach = Vector(key)
+    return (attach.z - min(p.z for p in points),
+            max(p.z for p in points) - attach.z)
 
 
-down = Vector((0.0, 0.0, -1.0))
-
-default_facing = bulb_facing(nodes.DEFAULT_BULB_ROTATION, 0.0)
-if check(default_facing is not None, "[orientation] no bulb instances to measure"):
-    alignment = default_facing.dot(down)
-    print("    default offset -> asset +Y points "
-          + str(tuple(round(c, 3) for c in default_facing))
-          + ", dot(-Z) = %.3f" % alignment)
-    check(alignment > 0.999,
+default_hang = bulb_hang(nodes.DEFAULT_BULB_ROTATION, 0.0)
+if check(default_hang is not None, "[orientation] no bulb instances to measure"):
+    below, above = default_hang
+    print("    default offset -> %.3f below attach / %.3f above" % (below, above))
+    check(below > above * 3.0,
           "[orientation] bulbs do not hang down with the default offset: "
-          "asset +Y aligns with world -Z by " + str(round(alignment, 4)))
+          + str(round(below, 3)) + " below vs " + str(round(above, 3)) + " above")
 
-# Different offsets must give genuinely different orientations. If two
-# candidates ever report the same basis, parameters have stopped applying and
-# every other assertion here is measuring stale geometry.
-zero_facing = bulb_facing((0.0, 0.0, 0.0), 4.0)
-if check(zero_facing is not None, "[orientation] no instances for the zero offset"):
-    print("    zero offset    -> asset +Y points "
-          + str(tuple(round(c, 3) for c in zero_facing)))
-    check((zero_facing - default_facing).length > 0.5,
-          "[orientation] zero and default offsets produced the same orientation "
-          "-- the Bulb Rotation input is not being applied at all")
-    check(zero_facing.dot(Vector((0.0, 0.0, 1.0))) > 0.999,
-          "[orientation] with no offset the asset's +Y should land on world +Z, "
-          "got " + str(tuple(round(c, 3) for c in zero_facing))
-          + " -- the bundled asset's native orientation has changed, so "
-            "DEFAULT_BULB_ROTATION needs re-measuring")
+# The opposite rotation must put it upside down. If it doesn't, the rotation
+# input isn't being applied and the assertion above passes for the wrong reason.
+flipped = bulb_hang((math.pi / 2.0, 0.0, 0.0), 5.0)
+if check(flipped is not None, "[orientation] no instances for the flipped offset"):
+    below, above = flipped
+    print("    +90 about X    -> %.3f below attach / %.3f above" % (below, above))
+    check(above > below * 3.0,
+          "[orientation] +90 about X should point the bulb UP, got "
+          + str(round(below, 3)) + " below vs " + str(round(above, 3))
+          + " above -- Bulb Rotation is not being applied")
 
-# Random spin must default to off.
-spin_strand = rig.create_strand(
-    bpy.context, Vector((-4.0, 8.0, 3.0)), Vector((4.0, 8.0, 3.0)),
-    shape.default_sag_point(Vector((-4.0, 8.0, 3.0)), Vector((4.0, 8.0, 3.0))))
-fresh_spin = rig.get_parameter(spin_strand.modifiers[0].node_group, "Random Spin")
+# Random spin must default to off, and the rotation default must survive the
+# min/max clamp that interface sockets apply.
+spin_start, spin_end = Vector((-4.0, 10.0, 3.0)), Vector((4.0, 10.0, 3.0))
+spin_strand = rig.create_strand(bpy.context, spin_start, spin_end,
+                                shape.default_sag_point(spin_start, spin_end))
+fresh_tree = spin_strand.modifiers[0].node_group
+fresh_spin = rig.get_parameter(fresh_tree, "Random Spin")
 print("    default Random Spin on a fresh strand: " + str(fresh_spin))
 check(abs(fresh_spin) < 1e-6,
       "[orientation] Random Spin should default to 0, got " + str(fresh_spin))
 
-stored_rotation = rig.get_parameter(spin_strand.modifiers[0].node_group,
-                                    "Bulb Rotation")
+stored_rotation = rig.get_parameter(fresh_tree, "Bulb Rotation")
 check(stored_rotation is not None
-      and abs(stored_rotation[0] - math.pi) < 1e-4,
+      and abs(stored_rotation[0] + math.pi / 2.0) < 1e-4,
       "[orientation] Bulb Rotation default was clamped or lost: "
       + str(tuple(stored_rotation) if stored_rotation else None)
       + " (interface sockets clamp to min/max, which start at 0/0)")
@@ -784,6 +785,157 @@ after = dict((s.name, s.lightgroup) for s in (strand_one, strand_two))
 check(before == after,
       "[lightgroups] strand assignments changed on a clear/recreate cycle: "
       + str(before) + " -> " + str(after))
+
+
+# --- 13. Cable types --------------------------------------------------------
+#
+# One strand is a plain tube; more strands are wound into a bundle. Built by
+# duplicating the spine, tilting each copy along its length, and sweeping an
+# off-centre profile -- so the checks here are that strand count actually
+# multiplies the geometry and that the bundle widens as strands are added
+# rather than collapsing into itself.
+
+print("=== 13. cable types ===")
+reset_scene()
+
+
+def cable_geometry(strands, twist, offset_y):
+    start = Vector((-4.0, offset_y, 3.0))
+    end = Vector((4.0, offset_y, 3.0))
+    strand = rig.create_strand(bpy.context, start, end,
+                               shape.default_sag_point(start, end))
+    modifier = strand.modifiers[0]
+    tree = modifier.node_group
+    rig.set_parameter(tree, modifier, "Cable Strands", strands)
+    rig.set_parameter(tree, modifier, "Cable Twist", twist)
+    bpy.context.view_layer.update()
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = strand.evaluated_get(depsgraph)
+    if evaluated.data is None:
+        return None
+    points = [evaluated.matrix_world @ v.co for v in evaluated.data.vertices]
+    # Thickness measured across the strand, perpendicular to its run.
+    spread = max(p.y for p in points) - min(p.y for p in points)
+    return len(points), spread
+
+
+single = cable_geometry(1, 0.0, 0.0)
+twisted = cable_geometry(2, 1.5, 4.0)
+braided = cable_geometry(4, 3.0, 8.0)
+
+for label, result in (("single", single), ("twisted", twisted), ("braided", braided)):
+    if result is None:
+        FAILURES.append("[cable] " + label + " produced no geometry")
+    else:
+        print("    %-8s verts=%-6d width=%.4f" % (label, result[0], result[1]))
+
+if single and twisted and braided:
+    check(twisted[0] == single[0] * 2,
+          "[cable] 2 strands should double the geometry: "
+          + str(single[0]) + " -> " + str(twisted[0]))
+    check(braided[0] == single[0] * 4,
+          "[cable] 4 strands should quadruple the geometry: "
+          + str(single[0]) + " -> " + str(braided[0]))
+
+    # A single strand must stay a plain centred tube -- the off-axis offset has
+    # to collapse to zero, or a plain cable would render as a hollow ring.
+    check(abs(single[1] - 0.016) < 0.002,
+          "[cable] a single strand should be one cable diameter wide (~0.016), "
+          "got " + str(round(single[1], 4)))
+
+    # Adding strands must widen the bundle. N circles of radius r on a ring
+    # touch at ring radius r/sin(pi/N), so 4 strands sit wider than 2.
+    check(twisted[1] > single[1] * 1.5,
+          "[cable] 2 strands did not widen the bundle: "
+          + str(round(single[1], 4)) + " -> " + str(round(twisted[1], 4)))
+    check(braided[1] > twisted[1],
+          "[cable] 4 strands should sit wider than 2, got "
+          + str(round(twisted[1], 4)) + " -> " + str(round(braided[1], 4))
+          + " -- strands are interpenetrating instead of spreading")
+
+
+# --- 14. Spiral: wrapping an object -----------------------------------------
+#
+# Two clicks give a base and a top; the object clicked first gets wrapped. The
+# helix is raycast onto that object's surface, which is the whole point -- a
+# fixed-radius helix only matches a tapered trunk at one height.
+#
+# The test wraps a truncated cone and checks the wrap actually narrows with it.
+# A wrap that missed the surface entirely would still LOOK like a spiral, just
+# at the fallback radius, so "it produced a curve" proves nothing on its own.
+
+print("=== 14. spiral wrap ===")
+reset_scene()
+
+trunk_mesh = bpy.data.meshes.new("Trunk")
+bm = bmesh.new()
+bmesh.ops.create_cone(bm, cap_ends=True, segments=24,
+                      radius1=0.6, radius2=0.2, depth=4.0)
+bm.to_mesh(trunk_mesh)
+bm.free()
+trunk = bpy.data.objects.new("Trunk", trunk_mesh)
+bpy.context.scene.collection.objects.link(trunk)
+trunk.location = (0.0, 0.0, 2.0)
+bpy.context.view_layer.update()
+
+spiral = rig.create_spiral(bpy.context, Vector((0.0, 0.0, 0.2)),
+                           Vector((0.0, 0.0, 3.8)), trunk, turns=6.0)
+bpy.context.view_layer.update()
+
+check(spiral.get(picking.STRAND_PROP) is not None,
+      "[spiral] wrapped string is not tagged, so Create Lightgroups won't find it")
+
+depsgraph = bpy.context.evaluated_depsgraph_get()
+evaluated = spiral.evaluated_get(depsgraph)
+points = ([evaluated.matrix_world @ v.co for v in evaluated.data.vertices]
+          if evaluated.data else [])
+check(len(points) > 0, "[spiral] wrap produced no geometry")
+
+if points:
+    zs = [p.z for p in points]
+    print("    z span %.2f..%.2f" % (min(zs), max(zs)))
+    check(min(zs) > 0.0 and max(zs) < 4.0,
+          "[spiral] wrap escaped the trunk vertically: "
+          + str(round(min(zs), 2)) + ".." + str(round(max(zs), 2)))
+
+    def mean_radius(low, high):
+        band = [p for p in points if low <= p.z <= high]
+        if not band:
+            return None
+        return sum(math.hypot(p.x, p.y) for p in band) / len(band)
+
+    near_base = mean_radius(0.4, 0.9)
+    near_top = mean_radius(3.1, 3.6)
+    if check(near_base is not None and near_top is not None,
+             "[spiral] could not sample the wrap at base and top"):
+        print("    mean radius: base %.3f, top %.3f" % (near_base, near_top))
+        check(near_base > near_top + 0.15,
+              "[spiral] the wrap does not follow the taper: base "
+              + str(round(near_base, 3)) + " vs top " + str(round(near_top, 3)))
+        # The cone is 0.6 at the bottom and 0.2 at the top, plus the standoff.
+        # Landing near the FALLBACK radius instead would mean every ray missed.
+        check(0.45 < near_base < 0.75,
+              "[spiral] base radius " + str(round(near_base, 3))
+              + " does not match the trunk (~0.6) -- rays are probably missing "
+                "and falling back")
+
+    bulbs = bulb_positions(spiral)
+    print("    bulb positions: " + str(bulbs))
+    check(bulbs > 0, "[spiral] no bulbs on the wrapped string")
+
+# More turns must mean a longer string and more bulbs.
+tight = rig.create_spiral(bpy.context, Vector((0.0, 0.0, 0.2)),
+                          Vector((0.0, 0.0, 3.8)), trunk, turns=14.0)
+bpy.context.view_layer.update()
+check(bulb_positions(tight) > bulbs,
+      "[spiral] raising Turns did not lengthen the string: "
+      + str(bulbs) + " -> " + str(bulb_positions(tight)))
+
+# The spiral group must be its own kind, not the hanging-strand one.
+check(spiral.modifiers[0].node_group.name.startswith(nodes.SPIRAL_GROUP_BASE_NAME),
+      "[spiral] wrapped string is using the hanging-strand node group: "
+      + spiral.modifiers[0].node_group.name)
 
 
 _VERDICT_REACHED.append(True)

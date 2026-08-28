@@ -40,6 +40,7 @@ from .picking import CONTROL_PROP, STRAND_PROP
 
 COLLECTION_NAME = "Festoons"
 STRAND_BASE_NAME = "Festoon"
+SPIRAL_BASE_NAME = "Festoon Spiral"
 
 # Bulb SOURCES live in their own collection, not mixed in with the strands.
 # Festoons/ should contain the things you placed; the objects being instanced
@@ -435,6 +436,71 @@ def strand_node(strand, node_name):
     if modifier is None or modifier.node_group is None:
         return None
     return modifier.node_group.nodes.get(node_name)
+
+
+def create_spiral(context, base, top, target, bulb_object=None,
+                  bulb_collection=None, bulb_spacing=None, turns=None):
+    """Wrap a light string around an object.
+
+    Two clicks give the base and the top; the object hit by the first click is
+    what gets wrapped. The node group raycasts onto that object's surface, so
+    the string follows a tapered trunk or a fluted column rather than floating
+    off a cylinder.
+    """
+    scene = context.scene
+    collection = get_collection(scene)
+    tree = nodes.create_group(mode=nodes.MODE_SPIRAL)
+
+    height = (Vector(top) - Vector(base)).length
+    display_size = max(0.05, min(0.5, height * 0.05))
+
+    mesh = bpy.data.meshes.new(SPIRAL_BASE_NAME + "_mesh")
+    spiral = bpy.data.objects.new(SPIRAL_BASE_NAME, mesh)
+    spiral.location = (0.0, 0.0, 0.0)
+    spiral[STRAND_PROP] = True
+    collection.objects.link(spiral)
+
+    base_empty = _make_empty(spiral.name + "_Base", base, None,
+                             collection, display_size)
+    top_empty = _make_empty(spiral.name + "_Top", top, None,
+                            collection, display_size)
+    for empty in (base_empty, top_empty):
+        empty.parent = spiral
+        empty.matrix_parent_inverse = spiral.matrix_world.inverted()
+
+    modifier = spiral.modifiers.new("Festoon Spiral", 'NODES')
+    modifier.node_group = tree
+
+    defaults = dict(nodes.NEW_STRAND_DEFAULTS)
+    defaults.update(nodes.NEW_SPIRAL_DEFAULTS)
+    if bulb_spacing:
+        defaults["Bulb Spacing"] = bulb_spacing
+    if turns:
+        defaults["Turns"] = turns
+
+    # A search radius that doesn't clear the object leaves every ray starting
+    # inside it, and the whole helix collapses onto the axis. Size it from what
+    # is actually being wrapped.
+    if target is not None:
+        radius = max(target.dimensions) if any(target.dimensions) else 1.0
+        defaults["Search Radius"] = max(0.5, radius * 1.5)
+
+    for input_name, value in defaults.items():
+        set_parameter(tree, modifier, input_name, value)
+
+    if bulb_object is None and bulb_collection is None:
+        bulb_collection = ensure_marquee_bulb(context)
+        if bulb_collection is None:
+            bulb_object = ensure_default_bulb(scene)
+
+    set_strand_targets(tree, start=base_empty, end=top_empty,
+                       bulb=bulb_object, bulb_collection=bulb_collection)
+
+    target_node = tree.nodes.get(nodes.NODE_SPIRAL_TARGET)
+    if target_node is not None and target is not None:
+        target_node.inputs["Object"].default_value = target
+
+    return spiral
 
 
 def strand_objects(scene):

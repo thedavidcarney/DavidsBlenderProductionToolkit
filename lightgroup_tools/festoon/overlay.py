@@ -134,6 +134,21 @@ class PlacementOverlay:
             end = operator.end
             hover = operator.hover
 
+            # Spiral placement has no sag stage, and previewing the wrap would
+            # mean re-running the surface raycast in Python on every mouse
+            # move. Show the axis instead -- that IS what's being chosen.
+            if getattr(operator, "axis_only", False):
+                if start is None:
+                    if hover is not None:
+                        self._points([hover], COLOR_CURSOR, CURSOR_SIZE)
+                    return
+                if hover is not None:
+                    self._polyline([start, hover], COLOR_CURVE, CURVE_WIDTH)
+                    self._points([start, hover], COLOR_ANCHOR, ANCHOR_SIZE)
+                else:
+                    self._points([start], COLOR_ANCHOR, ANCHOR_SIZE)
+                return
+
             # Stage 1: just a cursor marker, so you can see where a click lands
             # before committing to it.
             if start is None:

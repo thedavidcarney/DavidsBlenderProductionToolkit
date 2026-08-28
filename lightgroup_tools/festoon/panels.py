@@ -26,6 +26,8 @@ class FESTOON_PT_main_panel(bpy.types.Panel):
         column.scale_y = 1.5
         column.operator("festoon.place_strand", icon='OUTLINER_OB_LIGHT',
                         text="Place Strand")
+        column.operator("festoon.place_spiral", icon='FORCE_MAGNETIC',
+                        text="Wrap Object")
 
         box = layout.box()
         box.label(text="Click start, click end, set sag", icon='INFO')
@@ -38,6 +40,7 @@ class FESTOON_PT_main_panel(bpy.types.Panel):
         layout.prop(settings, "bulb_object")
         layout.prop(settings, "bulb_spacing")
         layout.prop(settings, "flatness", slider=True)
+        layout.prop(settings, "spiral_turns")
 
         strands = rig.strand_objects(context.scene)
         if strands:
@@ -67,6 +70,12 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
         "Bulb Scale",
         "Bulb Rotation",
         "Cable Radius",
+        "Cable Strands",
+        "Cable Twist",
+        "Turns",
+        "Surface Offset",
+        "Search Radius",
+        "Radius Jitter",
         "Random Tilt",
         "Random Spin",
         "Seed",

@@ -175,6 +175,40 @@ The preview calls `shape.curve_points()` — a second implementation of the math
 
 Drawing is best-effort: any GPU error disables the overlay and lets placement continue rather than taking the operator down mid-strand. GPU shaders can't be exercised headlessly (no GL context in background mode), so the drawing itself is verified by eye — the geometry it *would* draw is what's under test.
 
+**Cable types** are `Cable Strands` (1-6) plus `Cable Twist` (turns per metre).
+1 is a plain cable, 2-3 reads as twisted christmas-light flex, 4+ as braided.
+Built by DUPLICATING the spine per strand, tilting each copy along its length,
+and sweeping an off-centre profile — Curve to Mesh rotates the profile by the
+tilt, so an off-centre circle plus a winding tilt traces a helix in a handful
+of nodes rather than per-point frame maths. The bundle radius is
+`r / sin(pi/N)`, the radius at which N circles of radius r just touch; a flat
+`r` makes 3+ strands interpenetrate into a blob. At 1 strand the offset
+collapses to zero so a plain cable stays a plain tube and the twist is inert.
+
+**Spiral mode** (`Wrap Object`) wraps a string around a trunk or column. Two
+clicks give base and top; **the object hit by the first click is the wrap
+target**, so that click must land on real geometry rather than the empty-space
+fallback. A helix is laid out around the axis and every point is raycast
+*inward* onto the target, then pushed back out by `Surface Offset` — which is
+what lets it follow a tapered trunk instead of floating off a cylinder that
+only matches at one height. Points that miss fall back to the search radius so
+the curve stays continuous.
+
+Two traps in there. The target's Object Info must be **RELATIVE**, not
+ORIGINAL: ORIGINAL means "the target's own local coordinates, ignoring its
+transform", so a trunk standing at z=2 gets raycast against a copy of itself
+back at the origin — the wrap still looks like a spiral, just the wrong size.
+And `Search Radius` must clear the object, or every ray starts inside it and
+the helix collapses onto the axis; `create_spiral` sizes it from the target's
+dimensions.
+
+Sample count scales with `Turns` (24 per turn), because a 64-point curve at 6
+turns is ten points per turn and reads as a polygon.
+
+The spine is chosen at BUILD time (`create_group(mode=...)`), not with a
+runtime Menu Switch — affordable only because every strand already gets its own
+group. Everything downstream of the spine is shared between the two modes.
+
 **Bulbs are instanced, uniform scale, no size randomness** — real bulbs are
 manufactured identical. Rotation randomness (tilt + spin) is wanted and is
 there.
@@ -227,13 +261,16 @@ are otherwise independent.
 Found the hard way while building Festoon Clicker. All verified by reducing to
 a minimal repro; several are 5.2-only regressions.
 
-- **An Object assigned to a geometry nodes MODIFIER input hangs Blender.** Hard
-  hang, no error, GUI and background alike. Reduces to five nodes (Object Info
+- **ANY datablock on a geometry nodes MODIFIER input hangs Blender.** Object,
+  Material and Collection inputs all reproduce it. Hard hang, no error, GUI
+  and background alike. Reduces to five nodes (Object Info
   → Curve Line → Resample). 5.0 and 5.1 run the identical setup fine. Setting
   the object straight onto the Object Info node avoids it. **This is why each
   strand gets its own node group** — node datablocks are per-tree. If this is
-  ever fixed, objects can move back onto modifier inputs and a single group can
-  be shared again.
+  ever fixed, datablocks can move back onto modifier inputs and a single group
+  can be shared again. **This is why Cable Material has no slot in the modifier
+  panel** — it cannot have one on 5.2. It lives on the Set Material node and is
+  exposed through the Festoon Clicker sidebar instead.
 - **Modifier inputs cannot be written from Python at all on 5.2.**
   `modifier.properties.inputs.<Socket_N>` is a read-only RNA *pointer*;
   `modifier[identifier]` raises (it worked on 5.0/5.1); and the IDProperty

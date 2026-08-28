@@ -61,6 +61,7 @@ EXPECTED_OPERATORS = (
     "lightgroup.restart_dialog",
     "lightgroup.close_dialog",
     "festoon.place_strand",
+    "festoon.place_spiral",
     "festoon.select_controls",
 )
 
@@ -87,6 +88,7 @@ EXPECTED_CLASSES = (
     "LIGHTGROUP_PT_compositor_panel",
     "LIGHTGROUP_PT_viewlayer_panel",
     "FESTOON_OT_place_strand",
+    "FESTOON_OT_place_spiral",
     "FESTOON_OT_select_controls",
     "FESTOON_PT_main_panel",
     "FESTOON_PT_strand_panel",

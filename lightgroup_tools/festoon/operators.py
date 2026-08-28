@@ -46,6 +46,9 @@ class FestoonSettings(bpy.types.PropertyGroup):
     bulb_object: bpy.props.PointerProperty(
         name="Bulb Object", type=bpy.types.Object,
         description="Single object instanced as the bulb. Only needed if you aren't using a collection")
+    spiral_turns: bpy.props.FloatProperty(
+        name="Turns", default=6.0, min=1.0, max=200.0,
+        description="How many times a wrapped string goes around, base to top")
     bulb_spacing: bpy.props.FloatProperty(
         name="Bulb Spacing", default=0.5, min=0.01, max=100.0, unit='LENGTH',
         description="Distance between bulbs on new strands. Also drives the placement preview")
@@ -252,6 +255,145 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
         self._finish(context)
 
 
+class FESTOON_OT_place_spiral(bpy.types.Operator):
+    """Click the base of an object, then the top, to wrap a light string around it.
+
+    The object you click first is the one that gets wrapped. Scroll to change
+    how many turns. Right-click or Escape to stop.
+    """
+
+    bl_idname = "festoon.place_spiral"
+    bl_label = "Wrap Object"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.area is not None and context.area.type == 'VIEW_3D'
+
+    def _settings(self, context):
+        return context.scene.festoon_settings
+
+    def _viewport(self, context):
+        space = context.space_data
+        return space if getattr(space, "type", None) == 'VIEW_3D' else None
+
+    def _header(self, context):
+        if self.base is None:
+            text = "Wrap: click the BASE of the object   |   Esc/RMB to stop"
+        else:
+            text = ("Wrap: click the TOP   |   scroll = turns (%.0f)   |   "
+                    "Esc/RMB to cancel" % self.turns)
+        if self.placed:
+            text += "   |   %d placed" % self.placed
+        context.area.header_text_set(text)
+
+    def _pick(self, context, event):
+        return pick(context, context.region, context.region_data,
+                    (event.mouse_region_x, event.mouse_region_y),
+                    viewport=self._viewport(context))
+
+    def _finish(self, context):
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None:
+            overlay.disable()
+        context.area.header_text_set(None)
+        context.window.cursor_modal_restore()
+        if context.area is not None:
+            context.area.tag_redraw()
+        if self.placed:
+            self.report({'INFO'}, "Wrapped %d object%s"
+                        % (self.placed, "" if self.placed == 1 else "s"))
+
+    def invoke(self, context, event):
+        if context.region_data is None:
+            self.report({'ERROR'}, "Needs a 3D viewport")
+            return {'CANCELLED'}
+
+        settings = self._settings(context)
+        self.placed = 0
+        self.turns = settings.spiral_turns
+        self.base = None
+        self.target = None
+        self.hover = None
+        # The overlay reads these off whichever operator owns it. A spiral has
+        # no sag stage, so axis_only tells it to draw the axis instead.
+        self.start = None
+        self.end = None
+        self.sag = None
+        self.flatness = settings.flatness
+        self.bulb_spacing = settings.bulb_spacing
+        self.sag_along = settings.sag_along
+        self.sag_v = settings.sag_v_ratio
+        self.sag_w = settings.sag_w_ratio
+        self.axis_only = True
+
+        self.overlay = PlacementOverlay(self)
+        self.overlay.enable(context)
+        context.window.cursor_modal_set('CROSSHAIR')
+        self._header(context)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'MIDDLEMOUSE':
+            return {'PASS_THROUGH'}
+        if event.type in {'WHEELINMOUSE', 'WHEELOUTMOUSE'} and self.base is None:
+            return {'PASS_THROUGH'}
+
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._finish(context)
+            return {'FINISHED'} if self.placed else {'CANCELLED'}
+
+        if self.base is not None and event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            step = 1.0 if event.type == 'WHEELUPMOUSE' else -1.0
+            self.turns = max(1.0, min(200.0, self.turns + step))
+            self._header(context)
+            self.overlay.tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'MOUSEMOVE':
+            self.hover = self._pick(context, event).location
+            self.overlay.tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            hit = self._pick(context, event)
+            if self.base is None:
+                # Needs a real surface hit: the object under the cursor IS the
+                # wrap target, so a fallback point in empty space is useless.
+                if hit.object is None:
+                    self.report({'WARNING'}, "Click ON the object you want to wrap")
+                    return {'RUNNING_MODAL'}
+                self.base = hit.location
+                self.target = hit.object
+                self.start = hit.location
+            else:
+                if (hit.location - self.base).length < 1e-4:
+                    self.report({'WARNING'}, "Base and top are the same point")
+                    return {'RUNNING_MODAL'}
+                settings = self._settings(context)
+                rig.create_spiral(context, self.base, hit.location, self.target,
+                                  bulb_object=settings.bulb_object,
+                                  bulb_collection=settings.bulb_collection,
+                                  bulb_spacing=settings.bulb_spacing,
+                                  turns=self.turns)
+                settings.spiral_turns = self.turns
+                self.placed += 1
+                bpy.ops.ed.undo_push(message="Wrap Object")
+                self.base = None
+                self.target = None
+                self.start = None
+
+            self._header(context)
+            self.overlay.tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        self._finish(context)
+
+
 class FESTOON_OT_select_controls(bpy.types.Operator):
     """Select the start, end and sag empties of the active strand"""
 
@@ -279,6 +421,7 @@ class FESTOON_OT_select_controls(bpy.types.Operator):
 classes = (
     FestoonSettings,
     FESTOON_OT_place_strand,
+    FESTOON_OT_place_spiral,
     FESTOON_OT_select_controls,
 )
 
