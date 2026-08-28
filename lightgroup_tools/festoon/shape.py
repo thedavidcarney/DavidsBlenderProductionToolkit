@@ -220,3 +220,38 @@ def resample_polyline(points, spacing):
     if len(result) < count:
         result.append(points[-1].copy())
     return result
+
+
+def helix_points(base, top, radius, turns, segments=None):
+    """A plain helix around the base-to-top axis, for the placement preview.
+
+    Deliberately NOT the shrinkwrapped result -- reproducing that would mean
+    re-running a raycast per point on every mouse move. What the preview is
+    for is judging turn DENSITY while dragging, and a nominal-radius helix
+    shows that honestly.
+    """
+    base = Vector(base)
+    top = Vector(top)
+    axis = top - base
+    height = axis.length
+    if height < DEGENERATE or turns <= 0.0:
+        return [base, top]
+
+    axis.normalize()
+    side = axis.cross(WORLD_UP)
+    if side.length < DEGENERATE:
+        side = axis.cross(Vector((1.0, 0.0, 0.0)))
+    side.normalize()
+    up = axis.cross(side)
+
+    if segments is None:
+        segments = max(24, min(1200, int(turns * 16)))
+
+    points = []
+    for index in range(segments + 1):
+        t = index / segments
+        angle = t * turns * 2.0 * math.pi
+        points.append(base + axis * (t * height)
+                      + side * (math.cos(angle) * radius)
+                      + up * (math.sin(angle) * radius))
+    return points

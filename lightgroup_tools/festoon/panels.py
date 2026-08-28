@@ -30,9 +30,9 @@ class FESTOON_PT_main_panel(bpy.types.Panel):
                         text="Wrap Object")
 
         box = layout.box()
-        box.label(text="Click start, click end, set sag", icon='INFO')
-        box.label(text="Scroll during sag = flatness")
-        box.label(text="Preview follows the cursor throughout")
+        box.label(text="Strand: start, end, then set sag", icon='INFO')
+        box.label(text="Wrap: base, top, then set wraps")
+        box.label(text="Scroll fine-tunes; preview follows the cursor")
 
         layout.separator()
         layout.label(text="New strands use:")
@@ -76,6 +76,7 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
         "Surface Offset",
         "Search Radius",
         "Radius Jitter",
+        "Fallback Radius",
         "Random Tilt",
         "Random Spin",
         "Seed",
@@ -130,6 +131,12 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
         # never applies -- only the modifier's own value does, and only Blender's
         # UI can write that. Drawing it here would be an inert control that
         # looks like it works.
+        # Cable Material itself is a modifier input and can only be written by
+        # Blender's own UI, so it isn't drawn here. The toggle beside it is a
+        # plain boolean and works fine from the interface default.
+        toggle = rig.interface_input(tree, "Use Custom Cable Material")
+        if toggle is not None:
+            layout.prop(toggle, "default_value", text="Use Custom Cable Material")
         layout.label(text="Cable Material: in the Modifier panel", icon='MATERIAL')
 
         layout.separator()

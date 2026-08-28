@@ -202,6 +202,24 @@ And `Search Radius` must clear the object, or every ray starts inside it and
 the helix collapses onto the axis; `create_spiral` sizes it from the target's
 dimensions.
 
+**Wraps are set by dragging, not typing.** Three clicks: base, top, then move
+the mouse up/down to set the wrap count and click to confirm — the same shape of
+interaction as the strand's sag step. Hard-capped at 50 (`MAX_WRAPS`) at
+15px per wrap, so a mouse slip costs a turn or two rather than asking Blender
+for hundreds of turns and thousands of bulbs. Scroll still nudges by exactly
+one. The overlay draws a nominal-radius helix while dragging so the density is
+readable; it is deliberately NOT the shrinkwrapped result, which would need a
+raycast per point on every mouse move.
+
+**Rays only accept NEAR-side hits.** The ray is fired from `Search Radius` out
+and travels twice that, so it passes through the axis and can strike the back
+of the object — the point then lands diametrically opposite where it belongs
+and the string appears to jump across. A near-side hit is always closer than
+`Search Radius`, which is the discriminator. Misses fall back to
+`Fallback Radius` (sized from the target's girth by `create_spiral`) rather
+than collapsing onto the axis, because a run of axis-collapsed points is
+exactly what reads as a vertical spike.
+
 **The wrap axis is re-centred on the target.** Both clicks land on the object's
 SURFACE, so the raw base-to-top line runs up one side rather than through the
 middle. Rays cast inward from an off-centre axis reach the surface at angles
@@ -219,6 +237,24 @@ turns is ten points per turn and reads as a polygon.
 The spine is chosen at BUILD time (`create_group(mode=...)`), not with a
 runtime Menu Switch — affordable only because every strand already gets its own
 group. Everything downstream of the spine is shared between the two modes.
+
+**The cable carries UVs.** `UVMap`, written on the corner domain: **U runs
+start to stop along the strand**, V wraps around the tube. Not an area-correct
+unwrap — the tube is never flattened — but a stable 0..1 along the run, which
+is what a shader wants for chases, gradients or masking part of a strand. Built
+by capturing the spline parameter on the spine and on the profile BEFORE Curve
+to Mesh, since that is the only way to recover "how far along" once the geometry
+is a tube. V stops short of 1.0 because the profile is a cyclic curve whose last
+segment closes back onto 0.
+
+**Cable material: a shared `Festoon Cable` datablock by default**, so restyling
+one restyles every festoon in the scene. Getting both a working default AND a
+modifier slot needs a `Use Custom Cable Material` toggle feeding a Switch,
+because of a three-way squeeze: the modifier input can't be written from Python
+(it hangs 5.2), a linked group input's interface default stores but never
+applies, and an *empty* Material socket CLEARS the material rather than leaving
+it alone — so the override can't simply be wired straight in. The default lives
+on the Switch's False socket, which is a plain node socket and does work.
 
 **Bulbs are instanced, uniform scale, no size randomness** — real bulbs are
 manufactured identical. Rotation randomness (tilt + spin) is wanted and is

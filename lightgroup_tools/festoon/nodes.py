@@ -66,6 +66,7 @@ NODE_BULB_INFO = "Festoon Bulb Info"
 NODE_BULB_COLLECTION = "Festoon Bulb Collection"
 NODE_SPIRAL_TARGET = "Festoon Spiral Target"
 NODE_CABLE_MATERIAL = "Festoon Cable Material"
+NODE_DEFAULT_MATERIAL = "Festoon Default Material"
 
 # FLATNESS_TO_EXPONENT / EXPONENT_MIN / EXPONENT_MAX are imported from shape.py
 # so the node group and the viewport preview use identical numbers.
@@ -75,6 +76,9 @@ MAX_RANDOM_TILT_DEGREES = 25.0
 
 # Absolute floor for bulb spacing, enforced inside the node tree.
 MIN_BULB_SPACING = 0.01
+
+# UV map written onto the generated cable.
+UV_MAP_NAME = "UVMap" 
 
 # Numeric defaults for a new strand's modifier.
 #
@@ -110,6 +114,7 @@ NEW_STRAND_DEFAULTS = {
     # fixture, so spinning it adds nothing and makes A/B comparisons noisy.
     # Christmas-light style assets are the case that wants it turned up.
     "Random Spin": 0.0,
+    "Use Custom Cable Material": False,
     "Seed": 0,
     "Curve Resolution": 64,
 }
@@ -120,6 +125,7 @@ NEW_SPIRAL_DEFAULTS = {
     "Surface Offset": 0.04,
     "Search Radius": 3.0,
     "Radius Jitter": 0.0,
+    "Fallback Radius": 0.3,
     # A wrapped string reads better with the bulbs closer together than a
     # hanging swag, and it is usually a smaller object.
     "Bulb Spacing": 0.25,
@@ -413,16 +419,29 @@ def _build_spiral_spine(tree, inp):
                                scale=offset_amount),
                         label="stand off the surface")
 
-    # Missed the object entirely -- sit at the search radius so the curve stays
-    # continuous instead of snapping to the axis.
+    # Missed, or hit the FAR side. The ray is fired from Search Radius out and
+    # travels twice that, so it passes through the axis and can strike the back
+    # of the object -- the point then lands diametrically opposite where it
+    # belongs and the string appears to jump across. A near-side hit is always
+    # closer than Search Radius, so that distance is the discriminator.
+    near_side = _math(tree, 'LESS_THAN', raycast.outputs["Hit Distance"],
+                      inp["Search Radius"], label="near side only")
+    usable = _math(tree, 'MULTIPLY', raycast.outputs["Is Hit"], near_side,
+                   label="hit AND near side")
+
+    # Fall back to a plausible radius rather than the axis. Collapsing to the
+    # centre is what produced a vertical spike once per turn: a run of missed
+    # points sitting on the axis reads as the string shooting straight up.
     missed = _vmath(tree, 'ADD', position.outputs["Position"],
-                    _vmath(tree, 'SCALE', radial, scale=inp["Surface Offset"]),
-                    label="fallback when nothing was hit")
+                    _vmath(tree, 'SCALE', radial,
+                           scale=_math(tree, 'ADD', inp["Fallback Radius"],
+                                       inp["Surface Offset"])),
+                    label="fallback radius when nothing was hit")
 
     hit_switch = tree.nodes.new("GeometryNodeSwitch")
     hit_switch.input_type = 'VECTOR'
     hit_switch.label = "hit or miss"
-    tree.links.new(raycast.outputs["Is Hit"], hit_switch.inputs["Switch"])
+    tree.links.new(usable, hit_switch.inputs["Switch"])
     tree.links.new(missed, hit_switch.inputs["False"])
     tree.links.new(on_surface, hit_switch.inputs["True"])
 
@@ -482,7 +501,10 @@ def create_group(mode=MODE_STRAND):
     # Exposed as a real modifier input, unlike the bulb object/collection.
     # Nothing here ever assigns it from Python -- that specific write is what
     # hangs 5.2 -- so it is safe to surface where people expect to find it.
-    _new_input(tree, 'NodeSocketMaterial', "Cable Material")
+    _new_input(tree, 'NodeSocketMaterial', "Cable Material",
+               description="Overrides the shared default. Tick Use Custom Cable Material to apply it")
+    _new_input(tree, 'NodeSocketBool', "Use Custom Cable Material", False,
+               description="Off uses the shared Festoon Cable material; on uses the slot above")
     _new_input(tree, 'NodeSocketFloat', "Random Tilt", 0.15, 0.0, 1.0,
                description="How much each bulb tips off vertical")
     _new_input(tree, 'NodeSocketFloat', "Random Spin", 0.0, 0.0, 1.0,
@@ -500,6 +522,8 @@ def create_group(mode=MODE_STRAND):
                    description="How far out to start looking for the surface. Must clear the object")
         _new_input(tree, 'NodeSocketFloat', "Radius Jitter", 0.0, 0.0, 1.0,
                    description="Randomises how tightly the string hugs the surface")
+        _new_input(tree, 'NodeSocketFloat', "Fallback Radius", 0.3, 0.0, 100.0,
+                   description="Radius used where the surface isn't found, e.g. above the object or across a gap")
 
     group_in = tree.nodes.new("NodeGroupInput")
     group_out = tree.nodes.new("NodeGroupOutput")
@@ -548,10 +572,30 @@ def create_group(mode=MODE_STRAND):
     tree.links.new(strands.outputs["Geometry"], tilt.inputs["Curve"])
     tree.links.new(_math(tree, 'ADD', twist_angle, phase), tilt.inputs["Tilt"])
 
+    # Capture the position along the strand BEFORE sweeping it into a tube.
+    # Curve to Mesh carries curve-point attributes onto the mesh, which is the
+    # only way to recover "how far along" once the geometry is a tube.
+    capture_u = tree.nodes.new("GeometryNodeCaptureAttribute")
+    capture_u.label = "U along the strand"
+    capture_u.domain = 'POINT'
+    capture_u.capture_items.new('FLOAT', "u")
+    tree.links.new(tilt.outputs["Curve"], capture_u.inputs["Geometry"])
+    uv_parameter = tree.nodes.new("GeometryNodeSplineParameter")
+    tree.links.new(uv_parameter.outputs["Factor"], capture_u.inputs["u"])
+
     profile = tree.nodes.new("GeometryNodeCurvePrimitiveCircle")
     profile.label = "Cable profile"
     profile.inputs["Resolution"].default_value = 6
     tree.links.new(inp["Cable Radius"], profile.inputs["Radius"])
+
+    # And around the profile, for V.
+    capture_v = tree.nodes.new("GeometryNodeCaptureAttribute")
+    capture_v.label = "V around the tube"
+    capture_v.domain = 'POINT'
+    capture_v.capture_items.new('FLOAT', "v")
+    tree.links.new(profile.outputs["Curve"], capture_v.inputs["Geometry"])
+    profile_parameter = tree.nodes.new("GeometryNodeSplineParameter")
+    tree.links.new(profile_parameter.outputs["Factor"], capture_v.inputs["v"])
 
     # Push the profile off-axis so the strands sit alongside each other rather
     # than through each other. N circles of radius r arranged on a ring touch
@@ -575,20 +619,51 @@ def create_group(mode=MODE_STRAND):
                           label="bundle offset")
     offset_profile = tree.nodes.new("GeometryNodeTransform")
     offset_profile.label = "Push profile off-axis"
-    tree.links.new(profile.outputs["Curve"], offset_profile.inputs["Geometry"])
+    tree.links.new(capture_v.outputs["Geometry"], offset_profile.inputs["Geometry"])
     translation = tree.nodes.new("ShaderNodeCombineXYZ")
     tree.links.new(bundle_offset, translation.inputs["X"])
     tree.links.new(translation.outputs["Vector"], offset_profile.inputs["Translation"])
 
     to_mesh = tree.nodes.new("GeometryNodeCurveToMesh")
-    tree.links.new(tilt.outputs["Curve"], to_mesh.inputs["Curve"])
+    tree.links.new(capture_u.outputs["Geometry"], to_mesh.inputs["Curve"])
     tree.links.new(offset_profile.outputs["Geometry"], to_mesh.inputs["Profile Curve"])
+
+    # U runs start -> stop along the cable, V wraps around it. Not an
+    # area-correct unwrap -- the tube is never flattened -- but it is a stable
+    # 0..1 along the strand, which is what a shader wants for chases, gradients
+    # or masking a run of bulbs.
+    uv_vector = tree.nodes.new("ShaderNodeCombineXYZ")
+    tree.links.new(capture_u.outputs["u"], uv_vector.inputs["X"])
+    tree.links.new(capture_v.outputs["v"], uv_vector.inputs["Y"])
+
+    store_uv = tree.nodes.new("GeometryNodeStoreNamedAttribute")
+    store_uv.label = "Cable UVs"
+    store_uv.data_type = 'FLOAT2'
+    store_uv.domain = 'CORNER'
+    tree.links.new(to_mesh.outputs["Mesh"], store_uv.inputs["Geometry"])
+    store_uv.inputs["Name"].default_value = UV_MAP_NAME
+    tree.links.new(uv_vector.outputs["Vector"], store_uv.inputs["Value"])
+
+    # A shared default that a user override can replace.
+    #
+    # The default has to live on a NODE socket, because that is the only place
+    # Python can put a material that actually takes effect: the modifier input
+    # can't be written from Python (it hangs 5.2) and a linked group input's
+    # interface default stores but never applies. But an empty Material socket
+    # CLEARS the material rather than leaving it alone, so the override can't
+    # simply be wired straight in -- hence the explicit toggle.
+    material_choice = tree.nodes.new("GeometryNodeSwitch")
+    material_choice.name = NODE_DEFAULT_MATERIAL
+    material_choice.label = "Default or custom"
+    material_choice.input_type = 'MATERIAL'
+    tree.links.new(inp["Use Custom Cable Material"], material_choice.inputs["Switch"])
+    tree.links.new(inp["Cable Material"], material_choice.inputs["True"])
 
     cable_material = tree.nodes.new("GeometryNodeSetMaterial")
     cable_material.name = NODE_CABLE_MATERIAL
     cable_material.label = "Cable material"
-    tree.links.new(to_mesh.outputs["Mesh"], cable_material.inputs["Geometry"])
-    tree.links.new(inp["Cable Material"], cable_material.inputs["Material"])
+    tree.links.new(store_uv.outputs["Geometry"], cable_material.inputs["Geometry"])
+    tree.links.new(material_choice.outputs["Output"], cable_material.inputs["Material"])
 
     # --- Bulbs -----------------------------------------------------------
     # Resample by LENGTH rather than count: Blender divides the curve evenly to

@@ -22,6 +22,15 @@ STAGE_SAG = 'SAG'
 # Scroll-wheel step for the flatness control during the sag stage.
 FLATNESS_STEP = 0.15
 
+# Hard ceiling on wraps. A mouse slip while dragging shouldn't ask Blender for
+# eight hundred turns of cable and several thousand bulbs.
+MAX_WRAPS = 50.0
+MIN_WRAPS = 1.0
+
+# Pixels of vertical mouse travel per added wrap. The full 1..50 range is about
+# 750px, so a twitch moves it by one or two rather than tens.
+PIXELS_PER_WRAP = 15.0
+
 
 class FestoonSettings(bpy.types.PropertyGroup):
     """Per-scene placement state.
@@ -47,7 +56,7 @@ class FestoonSettings(bpy.types.PropertyGroup):
         name="Bulb Object", type=bpy.types.Object,
         description="Single object instanced as the bulb. Only needed if you aren't using a collection")
     spiral_turns: bpy.props.FloatProperty(
-        name="Turns", default=6.0, min=1.0, max=200.0,
+        name="Turns", default=6.0, min=1.0, max=50.0,
         description="How many times a wrapped string goes around, base to top")
     bulb_spacing: bpy.props.FloatProperty(
         name="Bulb Spacing", default=0.5, min=0.01, max=100.0, unit='LENGTH',
@@ -280,9 +289,11 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
     def _header(self, context):
         if self.base is None:
             text = "Wrap: click the BASE of the object   |   Esc/RMB to stop"
+        elif self.top is None:
+            text = "Wrap: click the TOP   |   Esc/RMB to cancel"
         else:
-            text = ("Wrap: click the TOP   |   scroll = turns (%.0f)   |   "
-                    "Esc/RMB to cancel" % self.turns)
+            text = ("Wrap: move up/down to set wraps (%.0f), click to confirm"
+                    "   |   Esc/RMB to cancel" % self.turns)
         if self.placed:
             text += "   |   %d placed" % self.placed
         context.area.header_text_set(text)
@@ -291,6 +302,15 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
         return pick(context, context.region, context.region_data,
                     (event.mouse_region_x, event.mouse_region_y),
                     viewport=self._viewport(context))
+
+    def _set_turns(self, value):
+        self.turns = max(MIN_WRAPS, min(MAX_WRAPS, round(value)))
+
+    def _refresh_preview(self):
+        if self.base is None or self.top is None:
+            self.turns_preview = None
+            return
+        self.turns_preview = (self.base, self.top, self.preview_radius, self.turns)
 
     def _finish(self, context):
         overlay = getattr(self, "overlay", None)
@@ -311,10 +331,15 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
 
         settings = self._settings(context)
         self.placed = 0
-        self.turns = settings.spiral_turns
+        self.turns = max(MIN_WRAPS, min(MAX_WRAPS, settings.spiral_turns))
         self.base = None
+        self.top = None
         self.target = None
         self.hover = None
+        self.turns_preview = None
+        self.preview_radius = 0.5
+        self._wrap_anchor_y = 0
+        self._wrap_at_anchor = self.turns
         # The overlay reads these off whichever operator owns it. A spiral has
         # no sag stage, so axis_only tells it to draw the axis instead.
         self.start = None
@@ -344,15 +369,25 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
             self._finish(context)
             return {'FINISHED'} if self.placed else {'CANCELLED'}
 
-        if self.base is not None and event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+        # Scroll still nudges by exactly one, for when the drag lands close.
+        if self.top is not None and event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
             step = 1.0 if event.type == 'WHEELUPMOUSE' else -1.0
-            self.turns = max(1.0, min(200.0, self.turns + step))
+            self._set_turns(self.turns + step)
+            self._wrap_anchor_y = event.mouse_region_y
+            self._wrap_at_anchor = self.turns
             self._header(context)
             self.overlay.tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'MOUSEMOVE':
-            self.hover = self._pick(context, event).location
+            if self.top is not None:
+                # Wrap count from vertical travel, same feel as the sag drag.
+                travelled = event.mouse_region_y - self._wrap_anchor_y
+                self._set_turns(self._wrap_at_anchor + travelled / PIXELS_PER_WRAP)
+                self._refresh_preview()
+                self._header(context)
+            else:
+                self.hover = self._pick(context, event).location
             self.overlay.tag_redraw(context)
             return {'RUNNING_MODAL'}
 
@@ -367,12 +402,27 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
                 self.base = hit.location
                 self.target = hit.object
                 self.start = hit.location
-            else:
+
+            elif self.top is None:
                 if (hit.location - self.base).length < 1e-4:
                     self.report({'WARNING'}, "Base and top are the same point")
                     return {'RUNNING_MODAL'}
+                self.top = hit.location
+                # Nominal radius for the preview helix, from the object's own
+                # girth. The real wrap is raycast onto the surface; this is
+                # only here to make turn density readable while dragging.
+                if self.target is not None:
+                    spread = [d for d in (self.target.dimensions[0],
+                                          self.target.dimensions[1]) if d]
+                    if spread:
+                        self.preview_radius = max(0.02, sum(spread) / len(spread) / 2.0)
+                self._wrap_anchor_y = event.mouse_region_y
+                self._wrap_at_anchor = self.turns
+                self._refresh_preview()
+
+            else:
                 settings = self._settings(context)
-                rig.create_spiral(context, self.base, hit.location, self.target,
+                rig.create_spiral(context, self.base, self.top, self.target,
                                   bulb_object=settings.bulb_object,
                                   bulb_collection=settings.bulb_collection,
                                   bulb_spacing=settings.bulb_spacing,
@@ -381,8 +431,10 @@ class FESTOON_OT_place_spiral(bpy.types.Operator):
                 self.placed += 1
                 bpy.ops.ed.undo_push(message="Wrap Object")
                 self.base = None
+                self.top = None
                 self.target = None
                 self.start = None
+                self.turns_preview = None
 
             self._header(context)
             self.overlay.tag_redraw(context)

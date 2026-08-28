@@ -49,6 +49,7 @@ BULB_COLLECTION_NAME = "Festoon Bulbs"
 
 BULB_NAME = "Festoon_Bulb"
 BULB_MATERIAL_NAME = "Festoon Bulb Emission"
+CABLE_MATERIAL_NAME = "Festoon Cable"
 
 # Radius of the fallback stand-in bulb, in metres. Only used when the bundled
 # asset can't be loaded.
@@ -203,6 +204,38 @@ def ensure_bulb_material():
     emission.inputs["Color"].default_value = (1.0, 0.82, 0.55, 1.0)
     emission.inputs["Strength"].default_value = 25.0
     tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    return material
+
+
+def ensure_cable_material():
+    """The shared default cable material.
+
+    One datablock for every strand, so changing it restyles every festoon in
+    the scene at once -- which is the point of a default. A strand that needs
+    something else ticks Use Custom Cable Material and picks its own.
+    """
+    material = bpy.data.materials.get(CABLE_MATERIAL_NAME)
+    if material is not None:
+        return material
+
+    material = bpy.data.materials.new(CABLE_MATERIAL_NAME)
+    if material.node_tree is None:
+        material.use_nodes = True
+    tree = material.node_tree
+
+    for node in list(tree.nodes):
+        if node.type != 'OUTPUT_MATERIAL':
+            tree.nodes.remove(node)
+    output = next((n for n in tree.nodes if n.type == 'OUTPUT_MATERIAL'), None)
+    if output is None:
+        output = tree.nodes.new("ShaderNodeOutputMaterial")
+
+    # Black rubber flex: dark, not pure black, and rough enough not to read as
+    # plastic under a hard key light.
+    shader = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    shader.inputs["Base Color"].default_value = (0.015, 0.015, 0.017, 1.0)
+    shader.inputs["Roughness"].default_value = 0.65
+    tree.links.new(shader.outputs["BSDF"], output.inputs["Surface"])
     return material
 
 
@@ -403,6 +436,7 @@ def create_strand(context, start, end, sag, flatness=1.0,
         if bulb_collection is None:
             bulb_object = ensure_default_bulb(scene)
 
+    set_default_cable_material(tree, ensure_cable_material())
     set_strand_targets(tree,
                        start=start_empty,
                        end=end_empty,
@@ -410,6 +444,18 @@ def create_strand(context, start, end, sag, flatness=1.0,
                        bulb=bulb_object,
                        bulb_collection=bulb_collection)
     return strand
+
+
+def set_default_cable_material(tree, material):
+    """Put the shared material on the default side of the material switch.
+
+    Not the group input: a modifier datablock input can't be written from
+    Python on 5.2, and a linked group input's interface default never applies.
+    The switch's False socket is a plain node socket, which does.
+    """
+    node = tree.nodes.get(nodes.NODE_DEFAULT_MATERIAL)
+    if node is not None and material is not None:
+        node.inputs["False"].default_value = material
 
 
 def set_strand_targets(tree, start=None, end=None, sag=None, bulb=None,
@@ -520,6 +566,12 @@ def create_spiral(context, base, top, target, bulb_object=None,
     if target is not None:
         radius = max(target.dimensions) if any(target.dimensions) else 1.0
         defaults["Search Radius"] = max(0.5, radius * 1.5)
+        # Where a ray finds nothing -- above the object, or across a gap -- the
+        # string sits at roughly the object's own girth instead of collapsing
+        # onto the axis.
+        cross_section = [d for d in (target.dimensions[0], target.dimensions[1]) if d]
+        if cross_section:
+            defaults["Fallback Radius"] = max(0.02, sum(cross_section) / len(cross_section) / 2.0)
 
     for input_name, value in defaults.items():
         set_parameter(tree, modifier, input_name, value)
@@ -529,6 +581,7 @@ def create_spiral(context, base, top, target, bulb_object=None,
         if bulb_collection is None:
             bulb_object = ensure_default_bulb(scene)
 
+    set_default_cable_material(tree, ensure_cable_material())
     set_strand_targets(tree, start=base_empty, end=top_empty,
                        bulb=bulb_object, bulb_collection=bulb_collection)
 

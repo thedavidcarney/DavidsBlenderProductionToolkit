@@ -1089,6 +1089,128 @@ check(stored is cable_material,
       "[material] interface default did not store the material")
 
 
+# --- 17. Cable UVs and the shared default material --------------------------
+
+print("=== 17. cable UVs and default material ===")
+reset_scene()
+
+uv_start, uv_end = Vector((-4.0, 0.0, 3.0)), Vector((4.0, 0.0, 3.0))
+uv_strand = rig.create_strand(bpy.context, uv_start, uv_end,
+                              shape.default_sag_point(uv_start, uv_end))
+bpy.context.view_layer.update()
+
+depsgraph = bpy.context.evaluated_depsgraph_get()
+evaluated = uv_strand.evaluated_get(depsgraph)
+mesh = evaluated.data
+
+if check(mesh is not None, "[uv] strand produced no mesh"):
+    # A shared default material, so restyling one restyles every festoon.
+    names = [m.name for m in mesh.materials if m]
+    print("    cable materials: " + str(names))
+    check(rig.CABLE_MATERIAL_NAME in names,
+          "[material] the shared default cable material was not applied, got "
+          + str(names))
+
+    layers = [layer.name for layer in mesh.uv_layers]
+    print("    uv layers: " + str(layers))
+    if check(nodes.UV_MAP_NAME in layers,
+             "[uv] no '" + nodes.UV_MAP_NAME + "' UV layer on the cable"):
+        uvs = [tuple(item.uv) for item in mesh.uv_layers[nodes.UV_MAP_NAME].data]
+        us = [u for u, _v in uvs]
+        vs = [_v for _u, _v in uvs]
+        print("    u %.3f..%.3f   v %.3f..%.3f"
+              % (min(us), max(us), min(vs), max(vs)))
+        check(min(us) < 0.02 and max(us) > 0.98,
+              "[uv] U should span the whole strand, got "
+              + str(round(min(us), 3)) + ".." + str(round(max(us), 3)))
+
+        # The ask was specifically: U runs start -> stop. Correlate U against
+        # world position rather than trusting the span, because a U that ran
+        # backwards or around the tube would span 0..1 just as happily.
+        near_start = []
+        near_end = []
+        for index, loop in enumerate(mesh.loops):
+            point = evaluated.matrix_world @ mesh.vertices[loop.vertex_index].co
+            if point.x < -3.5:
+                near_start.append(uvs[index][0])
+            elif point.x > 3.5:
+                near_end.append(uvs[index][0])
+
+        if check(near_start and near_end,
+                 "[uv] could not sample U at both ends of the strand"):
+            mean_start = sum(near_start) / len(near_start)
+            mean_end = sum(near_end) / len(near_end)
+            print("    mean U at start %.3f, at far end %.3f" % (mean_start, mean_end))
+            check(mean_start < 0.15 and mean_end > 0.85,
+                  "[uv] U does not run start->stop along the cable: "
+                  + str(round(mean_start, 3)) + " at the start vs "
+                  + str(round(mean_end, 3)) + " at the far end")
+
+        # V wraps around the tube. It stops short of 1.0 because the profile is
+        # a CYCLIC curve -- the last segment closes back onto 0 -- so this
+        # checks for a sane wrap rather than a full 0..1.
+        check(min(vs) < 0.02 and max(vs) > 0.5,
+              "[uv] V does not wrap around the profile, got "
+              + str(round(min(vs), 3)) + ".." + str(round(max(vs), 3)))
+
+# The override toggle has to exist, or the shared default can never be replaced.
+uv_tree = uv_strand.modifiers[0].node_group
+check(rig.interface_input(uv_tree, "Use Custom Cable Material") is not None,
+      "[material] Use Custom Cable Material toggle is missing")
+check(rig.interface_input(uv_tree, "Cable Material") is not None,
+      "[material] Cable Material input is missing")
+
+
+# --- 18. Wrap fallback radius -----------------------------------------------
+#
+# Where a ray finds no surface -- above the object, or across a gap -- the point
+# used to collapse onto the axis, and a run of those reads as the string
+# shooting straight up. It now sits at a nominal radius taken from the object's
+# own girth.
+
+print("=== 18. wrap fallback radius ===")
+reset_scene()
+
+post_mesh = bpy.data.meshes.new("Post")
+bm = bmesh.new()
+bmesh.ops.create_cone(bm, cap_ends=True, segments=24,
+                      radius1=0.4, radius2=0.4, depth=2.0)
+bm.to_mesh(post_mesh)
+bm.free()
+post = bpy.data.objects.new("Post", post_mesh)
+bpy.context.scene.collection.objects.link(post)
+post.location = (0.0, 0.0, 1.0)
+bpy.context.view_layer.update()
+
+# Deliberately run the wrap PAST the top of the post, so the upper turns find
+# nothing to hit.
+overrun = rig.create_spiral(bpy.context, Vector((0.0, 0.0, 0.2)),
+                            Vector((0.0, 0.0, 3.5)), post, turns=6.0)
+bpy.context.view_layer.update()
+
+fallback = rig.get_parameter(overrun.modifiers[0].node_group, "Fallback Radius")
+print("    fallback radius sized from the post: " + str(round(fallback, 3)))
+check(fallback > 0.2,
+      "[spiral] fallback radius was not sized from the object, got "
+      + str(round(fallback, 3)))
+
+depsgraph = bpy.context.evaluated_depsgraph_get()
+evaluated = overrun.evaluated_get(depsgraph)
+points = ([evaluated.matrix_world @ v.co for v in evaluated.data.vertices]
+          if evaluated.data else [])
+
+if check(points, "[spiral] overrunning wrap produced no geometry"):
+    above = [p for p in points if p.z > 2.2]
+    if check(above, "[spiral] no geometry above the post to check"):
+        radii = [math.hypot(p.x, p.y) for p in above]
+        mean_radius = sum(radii) / len(radii)
+        print("    mean radius above the post: %.3f" % mean_radius)
+        check(mean_radius > 0.15,
+              "[spiral] the wrap collapsed onto the axis where it found no "
+              "surface (mean radius " + str(round(mean_radius, 3))
+              + "). That collapse is the vertical spike.")
+
+
 _VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 

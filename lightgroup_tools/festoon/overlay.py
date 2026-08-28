@@ -138,6 +138,19 @@ class PlacementOverlay:
             # mean re-running the surface raycast in Python on every mouse
             # move. Show the axis instead -- that IS what's being chosen.
             if getattr(operator, "axis_only", False):
+                # Setting the wrap count: show a nominal-radius helix so the
+                # density is readable while dragging. Not the shrinkwrapped
+                # result -- that would need a raycast per point per mouse move.
+                preview = getattr(operator, "turns_preview", None)
+                if preview is not None:
+                    axis_base, axis_top, radius, turns = preview
+                    self._polyline([axis_base, axis_top], COLOR_CHORD, CHORD_WIDTH)
+                    self._polyline(shape.helix_points(axis_base, axis_top,
+                                                      radius, turns),
+                                   COLOR_CURVE, CURVE_WIDTH)
+                    self._points([axis_base, axis_top], COLOR_ANCHOR, ANCHOR_SIZE)
+                    return
+
                 if start is None:
                     if hover is not None:
                         self._points([hover], COLOR_CURSOR, CURSOR_SIZE)
