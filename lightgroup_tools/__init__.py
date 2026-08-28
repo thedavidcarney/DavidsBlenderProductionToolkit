@@ -41,6 +41,7 @@ import bpy
 if "core" in locals():
     import importlib
 
+    importlib.reload(core.tags)
     importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
     importlib.reload(lightgroups.panels)

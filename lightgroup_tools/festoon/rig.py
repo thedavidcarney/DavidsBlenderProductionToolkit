@@ -35,6 +35,7 @@ import bpy
 from mathutils import Vector
 
 from . import nodes
+from ..core.tags import FESTOON_BULB_SOURCE
 from .picking import CONTROL_PROP, STRAND_PROP
 
 COLLECTION_NAME = "Festoons"
@@ -153,7 +154,20 @@ def ensure_marquee_bulb(context):
     if not any(child is appended for child in bulbs.children):
         bulbs.children.link(appended)
     _exclude_layer_collection(context, bulbs)
+    tag_bulb_sources(appended)
     return appended
+
+
+def tag_bulb_sources(collection):
+    """Mark every object in a bulb source collection as instance-only.
+
+    Bulb assets carry emissive materials, so without this a material-slot scan
+    creates a lightgroup per bulb PART -- Coils_A, Fixture, Glass -- none of
+    which render on their own. The light comes from the strands instancing
+    them.
+    """
+    for obj in collection.all_objects:
+        obj[FESTOON_BULB_SOURCE] = True
 
 
 def _link_only(obj, collection):
@@ -214,6 +228,7 @@ def ensure_default_bulb(scene):
     mesh.materials.append(ensure_bulb_material())
 
     bulb = bpy.data.objects.new(BULB_NAME, mesh)
+    bulb[FESTOON_BULB_SOURCE] = True
     _link_only(bulb, get_bulb_collection(scene))
     bulb.hide_render = True
     try:

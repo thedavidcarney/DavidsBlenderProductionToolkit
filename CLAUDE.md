@@ -8,7 +8,8 @@ A repo of Blender addons for David Carney's team. Currently contains one addon (
 lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 ├── __init__.py            registration hub + reload guard. No feature code.
 ├── core/                  shared infrastructure (updater, preferences)
-│   └── updater.py
+│   ├── updater.py
+│   └── tags.py            custom-property tags shared BETWEEN tools
 ├── lightgroups/           the 'Lightgroups' sidebar tab
 │   ├── operators.py
 │   └── panels.py
@@ -202,11 +203,24 @@ Because one bulb emits N depsgraph instances, tests count distinct instance
 POSITIONS, not raw instances — otherwise bulb counts would depend on how the
 asset happens to be modelled.
 
-**Lightgroups:** strands are tagged with a `festoon_strand` custom property.
-Nothing is auto-assigned at placement (see the memory on that). The tag exists
-so `create_for_each_light` can be taught to find strands — their emission
-arrives via instancing, so they have no material slots and the current
-slot-based scan misses them entirely. **That teaching is not done yet.**
+**Lightgroups: wired up.** `create_for_each_light` now finds festoon strands
+via the `festoon_strand` tag, giving one lightgroup per strand named after it
+(`Festoon`, `Festoon_001`). Necessary because a strand emits through INSTANCED
+bulbs and so has no material slots of its own — the slot-based scan cannot see
+it, and without the tag every festoon would be silently missing from the
+compositor and only noticed in the EXR.
+
+Bulb SOURCE objects are tagged `festoon_bulb_source` and skipped by that same
+scan. They do carry emissive materials (the bundled bulb's `Coils` is emissive),
+but they are excluded from the view layer and render nothing — a lightgroup per
+bulb part would be pure noise.
+
+Still nothing is auto-assigned at placement; the end-of-scene button does the
+work. See [[feedback-no-intermediate-automation]].
+
+Tags live in `core/tags.py`, not in `festoon/`, because `lightgroups/` is what
+reads them and importing festoon from lightgroups would couple two tools that
+are otherwise independent.
 
 ## Blender 5.2 landmines
 
@@ -266,6 +280,8 @@ tests/run_festoon_test.sh
 - **`run_registration_test.sh`** — every class/operator/panel/pref still resolves across a cold enable, the updater's in-session reload, and an `importlib.reload` over a live addon; plus a clean-teardown check and a static scan forbidding relative imports inside function bodies. Sandboxes `BLENDER_USER_SCRIPTS` and pins the auto-check flag so it never hits the network.
 - **`run_update_install_test.sh`** — drives the actual update install across both transitions (flat → restructured, restructured → restructured), asserting the install lands at the top level, orphans get cleaned, and backups capture the whole package. Sandboxes `BLENDER_USER_CONFIG` too, because the updater derives its staging and backup dirs from the config path; it refuses to run if it doesn't see itself sandboxed.
 
+- All three scripts install an atexit guard that forces a non-zero exit unless an explicit verdict line is reached. An uncaught exception aborts the Python script but Blender still exits 0, so a crashed run would otherwise look identical to a clean one.
+- `reset_scene()` in the festoon suite re-enables the addon: `read_factory_settings` resets PREFERENCES too, which disables it, and anything calling `bpy.ops.lightgroup.*` afterwards fails with "operator could not be found".
 - **`run_festoon_test.sh`** — builds real strands and inspects the evaluated geometry: the depth-peeling raycast skips hidden objects and festoon's own strands, the curve passes through the sag empty at every flatness, flatness broadens the bottom without moving the low point, bulb spacing responds, a parent move stays rigid, and each strand gets its own node group.
 
 The `EXPECTED_*` lists in `tests/test_registration.py` are a deliberate contract — when a change legitimately renames or moves something, edit them on purpose rather than letting them drift. Beyond these, real testing is still loading the addon in Blender against a curated test scene (`tests/build_test_scene.py`).

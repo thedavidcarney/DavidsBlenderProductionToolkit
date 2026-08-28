@@ -21,13 +21,14 @@ from bpy_extras import view3d_utils
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
-# Marks a strand mesh. Also what teaches `create_for_each_light` to see
-# festoons: the strand's emission arrives via instancing, so it has no
-# material slots of its own and a slot-based scan misses it entirely.
-STRAND_PROP = "festoon_strand"
+from ..core.tags import FESTOON_CONTROL, FESTOON_STRAND
 
-# Marks the start/end/sag empties.
-CONTROL_PROP = "festoon_control"
+# Defined in core.tags, not here: lightgroups/ has to recognise a strand too,
+# and importing festoon from lightgroups would couple two tools that are
+# otherwise independent. Re-exported under the local names the rest of this
+# package already uses.
+STRAND_PROP = FESTOON_STRAND
+CONTROL_PROP = FESTOON_CONTROL
 
 # How far to step past a rejected hit before casting again. Small enough to be
 # invisible at any sane scene scale, large enough to clear the face we just hit

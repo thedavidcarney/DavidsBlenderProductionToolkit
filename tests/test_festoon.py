@@ -16,8 +16,10 @@ Everything else here is scaffolding checks: geometry gets generated, bulbs get
 instanced, parenting moves the strand rigidly.
 """
 
+import atexit
 import functools
 import math
+import os
 import sys
 
 import bmesh
@@ -31,6 +33,22 @@ print = functools.partial(print, flush=True)
 ADDON = "lightgroup_tools"
 
 FAILURES = []
+
+# An uncaught exception aborts this script but Blender still exits 0, so a
+# crashed run looks identical to a clean one to any caller checking the exit
+# code. Insist on reaching an explicit verdict.
+_VERDICT_REACHED = []
+
+
+def _abort_guard():
+    if not _VERDICT_REACHED:
+        print("TEST ABORTED before reaching a verdict -- see traceback above")
+        sys.stdout.flush()
+        os._exit(1)
+
+
+atexit.register(_abort_guard)
+
 
 
 def check(condition, message):
@@ -47,8 +65,21 @@ for name, module in list(sys.modules.items()):
 from lightgroup_tools.festoon import nodes, picking, rig, shape  # noqa: E402
 
 
+def enable_addon():
+    if ADDON not in bpy.context.preferences.addons:
+        bpy.ops.preferences.addon_enable(module=ADDON)
+    for name, module in list(sys.modules.items()):
+        if name.endswith(".updater") and hasattr(module, "_auto_check_done_this_session"):
+            module._auto_check_done_this_session = True
+
+
 def reset_scene():
+    # read_factory_settings resets PREFERENCES too, which disables the addon.
+    # Most sections only call plain Python helpers so they never noticed, but
+    # anything invoking bpy.ops.lightgroup.* gets "operator could not be found"
+    # unless it is re-enabled here.
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    enable_addon()
 
 
 def make_cube(name, location, size=1.0):
@@ -682,6 +713,80 @@ check(stored_rotation is not None
       + " (interface sockets clamp to min/max, which start at 0/0)")
 
 
+# --- 12. Festoon strands are found by Create Lightgroups --------------------
+#
+# The whole point of the strand tag. A strand emits through instanced bulbs, so
+# it has no material slots and create_for_each_light's slot scan cannot see it.
+# Without this, David's normal end-of-scene flow -- finish, hit Create
+# Lightgroups, hit Setup Denoise Compositor, render -- produces a compositor
+# with no passes for any festoon in the scene, and he only finds out in the EXR.
+
+print("=== 12. lightgroup integration ===")
+reset_scene()
+
+# create_for_each_light assigns a World lightgroup, so the scene needs a world.
+if bpy.context.scene.world is None:
+    bpy.context.scene.world = bpy.data.worlds.new("World")
+
+first_a, first_b = Vector((-4.0, 0.0, 3.0)), Vector((4.0, 0.0, 3.0))
+second_a, second_b = Vector((-4.0, 5.0, 3.0)), Vector((4.0, 5.0, 3.0))
+strand_one = rig.create_strand(bpy.context, first_a, first_b,
+                               shape.default_sag_point(first_a, first_b))
+strand_two = rig.create_strand(bpy.context, second_a, second_b,
+                               shape.default_sag_point(second_a, second_b))
+bpy.context.view_layer.update()
+
+check(not strand_one.lightgroup,
+      "[lightgroups] a freshly placed strand must NOT be auto-assigned a "
+      "lightgroup -- placement stays inert, the end-of-scene button does the work")
+
+bpy.ops.lightgroup.create_for_each_light()
+
+view_layer_groups = {lg.name for lg in bpy.context.view_layer.lightgroups}
+print("    lightgroups created: " + str(sorted(view_layer_groups)))
+
+for strand in (strand_one, strand_two):
+    expected = strand.name.replace(".", "_")
+    print("    " + strand.name + " -> lightgroup " + repr(strand.lightgroup))
+    check(strand.lightgroup == expected,
+          "[lightgroups] strand " + strand.name + " got lightgroup "
+          + repr(strand.lightgroup) + ", expected " + repr(expected))
+    check(expected in view_layer_groups,
+          "[lightgroups] no view-layer lightgroup named " + repr(expected))
+
+check(strand_one.lightgroup != strand_two.lightgroup,
+      "[lightgroups] both strands landed in the same lightgroup; they need to "
+      "be separately keyable in After Effects")
+
+# Bulb SOURCE parts must not produce lightgroups of their own. They carry
+# emissive materials but are excluded from the view layer and never render.
+source_names = set()
+marquee = bpy.data.collections.get(rig.BULB_ASSET_COLLECTION)
+if marquee is not None:
+    source_names = {o.name.replace(".", "_") for o in marquee.all_objects}
+polluting = sorted(source_names & view_layer_groups)
+check(not polluting,
+      "[lightgroups] bulb source parts got their own lightgroups: "
+      + str(polluting) + " -- these render nothing and are noise in the EXR")
+
+for name in sorted(source_names):
+    obj = bpy.data.objects.get(name)
+    if obj is not None:
+        check(not obj.lightgroup,
+              "[lightgroups] bulb source " + name + " was assigned to lightgroup "
+              + repr(obj.lightgroup))
+
+# Re-running must not duplicate or reassign.
+before = dict((s.name, s.lightgroup) for s in (strand_one, strand_two))
+bpy.ops.lightgroup.clear_all_lightgroups()
+bpy.ops.lightgroup.create_for_each_light()
+after = dict((s.name, s.lightgroup) for s in (strand_one, strand_two))
+check(before == after,
+      "[lightgroups] strand assignments changed on a clear/recreate cycle: "
+      + str(before) + " -> " + str(after))
+
+
+_VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
 print("\n" + "=" * 60)

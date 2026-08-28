@@ -1,5 +1,8 @@
 import bpy
 
+from ..core.tags import FESTOON_BULB_SOURCE, FESTOON_STRAND
+
+
 class LIGHTGROUP_OT_clear_all_lightgroups(bpy.types.Operator):
     """Delete all lightgroups from the current view layer"""
     bl_idname = "lightgroup.clear_all_lightgroups"
@@ -139,6 +142,13 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
             # Check if object has material slots
             if not hasattr(obj, 'material_slots'):
                 continue
+
+            # Skip objects that exist only to be instanced. A festoon bulb
+            # source has emissive materials but is excluded from the view layer
+            # and never renders itself -- a lightgroup per bulb part would be
+            # pure noise in the compositor.
+            if obj.get(FESTOON_BULB_SOURCE):
+                continue
             
             # Iterate through all material slots
             for slot in obj.material_slots:
@@ -153,6 +163,17 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
                         print(f"Found Object using Emission: {obj.name}")
                         emissive_objects.append(obj)
                     break
+
+        # Objects that emit through INSTANCING rather than their own material
+        # slots. A festoon strand instances its bulbs, so the strand mesh has no
+        # material slots at all and the scan above cannot see it -- every strand
+        # in the scene would silently end up with no lightgroup, and the denoise
+        # setup would then build a compositor missing those passes entirely.
+        # They carry a tag for exactly this reason.
+        for obj in bpy.data.objects:
+            if obj.get(FESTOON_STRAND) and obj not in emissive_objects:
+                print(f"Found instanced emitter (festoon strand): {obj.name}")
+                emissive_objects.append(obj)
 
         # Create a light group for each emissive object and assign it
         for i, emissive_object in enumerate(emissive_objects):

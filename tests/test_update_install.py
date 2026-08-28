@@ -29,6 +29,7 @@ B is the dangerous one: shipping the restructure would appear to work perfectly
 brick every install. That's the whole reason the restructure ships alone.
 """
 
+import atexit
 import os
 import shutil
 import sys
@@ -38,6 +39,22 @@ import bpy
 ADDON = "lightgroup_tools"
 
 FAILURES = []
+
+# An uncaught exception aborts this script but Blender still exits 0, so a
+# crashed run looks identical to a clean one to any caller checking the exit
+# code. Insist on reaching an explicit verdict.
+_VERDICT_REACHED = []
+
+
+def _abort_guard():
+    if not _VERDICT_REACHED:
+        print("TEST ABORTED before reaching a verdict -- see traceback above")
+        sys.stdout.flush()
+        os._exit(1)
+
+
+atexit.register(_abort_guard)
+
 
 
 def check(condition, message):
@@ -297,6 +314,7 @@ shutil.rmtree(fake_git, ignore_errors=True)
 print("    refused correctly, addon directory untouched")
 
 
+_VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
 print("\n" + "=" * 60)

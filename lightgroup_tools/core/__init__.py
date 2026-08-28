@@ -10,6 +10,7 @@ below is rebuilt from stale module objects and register() hands Blender the
 previous build's classes.
 """
 
+from . import tags
 from . import updater
 
 # Preferences first: the panels read prefs while drawing, and several operators

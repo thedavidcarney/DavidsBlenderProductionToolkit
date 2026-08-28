@@ -37,7 +37,9 @@ pinning updater._auto_check_done_this_session = True, so a test run never
 hits the network and never stages an update.
 """
 
+import atexit
 import importlib
+import os
 import sys
 
 import bpy
@@ -121,6 +123,22 @@ EXPECTED_PREF_PROPS = (
 # --- Tiny assertion harness -------------------------------------------------
 
 FAILURES = []
+
+# An uncaught exception aborts this script but Blender still exits 0, so a
+# crashed run looks identical to a clean one to any caller checking the exit
+# code. Insist on reaching an explicit verdict.
+_VERDICT_REACHED = []
+
+
+def _abort_guard():
+    if not _VERDICT_REACHED:
+        print("TEST ABORTED before reaching a verdict -- see traceback above")
+        sys.stdout.flush()
+        os._exit(1)
+
+
+atexit.register(_abort_guard)
+
 
 
 def check(condition, message):
@@ -358,6 +376,7 @@ except Exception as exc:  # noqa: BLE001
     FAILURES.append("[import hygiene] raised " + type(exc).__name__ + ": " + str(exc))
 
 
+_VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
 print("\n" + "=" * 60)
