@@ -75,12 +75,29 @@ MIN_BULB_SPACING = 0.01
 # Spacing lands on 0.0, which is the resample-by-zero hang the node tree now
 # guards against. Belt and braces, because the failure mode is a locked-up
 # Blender rather than a wrong-looking strand.
+# Base orientation for the bundled marquee bulb.
+#
+# The asset models the bulb pointing along its local +Y and it needs to hang
+# down world -Z. That is NOT a -90 degree rotation about X, which is the
+# obvious-looking answer and is wrong: the asset's +Y already arrives at world
+# +Z once instanced, so the correction from there is a 180 degree flip about X.
+# Measured, not derived -- see the orientation test, which builds a fresh
+# strand per candidate and checks where the asset's +Y actually lands.
+#
+# A different bulb asset with another native axis just needs its own value
+# here, or per-strand in the modifier.
+DEFAULT_BULB_ROTATION = (math.pi, 0.0, 0.0)
+
 NEW_STRAND_DEFAULTS = {
     "Bulb Spacing": 0.5,
     "Bulb Scale": 1.0,
+    "Bulb Rotation": DEFAULT_BULB_ROTATION,
     "Cable Radius": 0.008,
     "Random Tilt": 0.15,
-    "Random Spin": 1.0,
+    # Spin defaults to 0: a marquee bulb is radially symmetric apart from its
+    # fixture, so spinning it adds nothing and makes A/B comparisons noisy.
+    # Christmas-light style assets are the case that wants it turned up.
+    "Random Spin": 0.0,
     "Seed": 0,
     "Curve Resolution": 64,
 }
@@ -191,10 +208,20 @@ def create_group():
     # NOTE: no Object or Material sockets here -- see create_group().
     _new_input(tree, 'NodeSocketFloat', "Bulb Spacing", 0.5, 0.01, 100.0)
     _new_input(tree, 'NodeSocketFloat', "Bulb Scale", 1.0, 0.001, 100.0)
+    # min/max MUST be widened before the default is assigned. Interface sockets
+    # start at min=max=0, so setting a default first silently clamps it to zero
+    # -- which is exactly how this shipped broken the first time: the bulb kept
+    # its native orientation and the rotation input looked like it did nothing.
+    rotation_input = _new_input(
+        tree, 'NodeSocketVector', "Bulb Rotation",
+        min_value=-8.0 * math.pi, max_value=8.0 * math.pi,
+        description="Base orientation of the bulb asset, before any randomness")
+    rotation_input.subtype = 'EULER'
+    rotation_input.default_value = DEFAULT_BULB_ROTATION
     _new_input(tree, 'NodeSocketFloat', "Cable Radius", 0.008, 0.0, 1.0)
     _new_input(tree, 'NodeSocketFloat', "Random Tilt", 0.15, 0.0, 1.0,
                description="How much each bulb tips off vertical")
-    _new_input(tree, 'NodeSocketFloat', "Random Spin", 1.0, 0.0, 1.0,
+    _new_input(tree, 'NodeSocketFloat', "Random Spin", 0.0, 0.0, 1.0,
                description="How much each bulb spins about its own axis")
     _new_input(tree, 'NodeSocketInt', "Seed", 0, 0, 10000)
     _new_input(tree, 'NodeSocketInt', "Curve Resolution", 64, 2, 512,
@@ -354,6 +381,15 @@ def create_group():
     instances = tree.nodes.new("GeometryNodeInstanceOnPoints")
     tree.links.new(bulb_points.outputs["Curve"], instances.inputs["Points"])
     tree.links.new(bulb_join.outputs["Geometry"], instances.inputs["Instance"])
+
+    # Base orientation goes on Instance on Points, so the randomness below
+    # composes ON TOP of a correctly-facing bulb. Adding the two Eulers
+    # together instead would be wrong -- Euler addition isn't rotation
+    # composition, and it drifts as soon as the base isn't axis-aligned.
+    base_rotation = tree.nodes.new("FunctionNodeEulerToRotation")
+    base_rotation.label = "Bulb base orientation"
+    tree.links.new(inp["Bulb Rotation"], base_rotation.inputs["Euler"])
+    tree.links.new(base_rotation.outputs["Rotation"], instances.inputs["Rotation"])
 
     # --- Per-bulb random orientation -------------------------------------
     # data_type MUST be set before touching Min/Max: from Blender 5.2 the node

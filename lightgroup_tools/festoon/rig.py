@@ -7,13 +7,14 @@ Layout:
         Festoon_Start         empty, parented to the strand
         Festoon_End
         Festoon_Sag
-    Festoon Bulbs/            bulb SOURCES, hidden (eye off)
+    Festoon Bulbs/            bulb SOURCES, excluded from the view layer
       Marquee Bulb/           the bundled asset
 
 Bulb sources are a separate collection: Festoons should list the things you
-placed, and the objects being instanced are machinery. They stay IN the view
-layer though -- Collection Info instances what the depsgraph evaluates, so
-excluding them would empty every strand.
+placed, and the objects being instanced are machinery. The collection is
+EXCLUDED, because most bulb source objects ship with hide_render False and
+would otherwise render as a stray bulb at the origin. Collection Info still
+instances them when excluded -- it reads the collection, not the view layer.
 
 The empties are children of the strand mesh whose modifier reads them. That
 sounds circular but isn't: Blender tracks object transform and object geometry
@@ -91,16 +92,22 @@ def _asset_path(filename):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), "assets", filename)
 
 
-def _hide_layer_collection(context, collection):
-    """Switch the eye off for a collection in the current view layer.
+def _exclude_layer_collection(context, collection):
+    """Exclude a collection from the current view layer.
 
-    The eye is viewport visibility only, so the objects stay in the depsgraph
-    and remain instanceable. The monitor icon (collection.hide_viewport) would
-    drop them out entirely and the bulbs would vanish.
+    Exclusion, not the eye. The bulb source objects mostly ship with
+    hide_render False, so a merely eye-hidden collection still RENDERS -- you
+    would get a stray bulb sitting at the world origin in every frame.
+
+    Exclusion removes them from the view layer entirely, and Collection Info
+    keeps instancing them regardless: it reads the collection datablock rather
+    than the view layer, so instance counts are identical excluded or not
+    (verified). Best of both -- sources never render on their own, bulbs still
+    appear on every strand.
     """
     def walk(layer_collection):
         if layer_collection.collection is collection:
-            layer_collection.hide_viewport = True
+            layer_collection.exclude = True
             return True
         return any(walk(child) for child in layer_collection.children)
 
@@ -145,7 +152,7 @@ def ensure_marquee_bulb(context):
     bulbs = get_bulb_collection(context.scene)
     if not any(child is appended for child in bulbs.children):
         bulbs.children.link(appended)
-    _hide_layer_collection(context, bulbs)
+    _exclude_layer_collection(context, bulbs)
     return appended
 
 
@@ -265,6 +272,15 @@ def set_parameter(tree, modifier, name, value):
     on us by a separate 5.2 bug, and here it pays for itself. On 5.0/5.1 the
     modifier's stored value overrides the default, so both are written and
     each version uses whichever it honours.
+
+    KNOWN LIMITATION on 5.2: this reliably takes effect only BEFORE the strand
+    is first evaluated, i.e. at creation. Changing a value afterwards from
+    Python stores it but the evaluator keeps the original -- confirmed for
+    vector inputs across tree.update_tag(), object update_tag() and
+    reassigning node_group, none of which help. Editing through the panel goes
+    via RNA rather than plain assignment and is expected to behave normally.
+    Tests therefore build a FRESH strand per parameter value rather than
+    mutating one in place, which would silently measure stale geometry.
     """
     item = interface_input(tree, name)
     if item is None:
@@ -285,6 +301,7 @@ def set_parameter(tree, modifier, name, value):
             # evaluation and refuses a scalar. The interface default above is
             # already doing the real work, so this is genuinely optional.
             pass
+
     return True
 
 

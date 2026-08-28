@@ -65,6 +65,7 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
     QUICK_INPUTS = (
         "Bulb Spacing",
         "Bulb Scale",
+        "Bulb Rotation",
         "Cable Radius",
         "Random Tilt",
         "Random Spin",

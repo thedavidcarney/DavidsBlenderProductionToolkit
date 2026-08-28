@@ -190,6 +190,14 @@ Stripped from David's 33MB asset-library file to 654KB by dropping a packed
 environment EXR the bulb never referenced. A bulb is ~0.14m wide and 0.24m
 tall, which is what makes the 0.5m default spacing sensible.
 
+**Bulb Rotation** is the base orientation applied on Instance on Points, so
+random tilt/spin compose on top of a correctly-facing bulb (adding Eulers
+instead would be wrong -- Euler addition isn't rotation composition). The
+bundled bulb's default is a 180 degree flip about X, **measured, not derived**:
+the asset models the bulb along +Y, but that +Y already arrives at world +Z
+once instanced, so the obvious-looking -90 about X is wrong. Random Spin
+defaults to 0 -- a marquee bulb is radially symmetric apart from its fixture.
+
 Because one bulb emits N depsgraph instances, tests count distinct instance
 POSITIONS, not raw instances — otherwise bulb counts would depend on how the
 asset happens to be modelled.
@@ -227,6 +235,18 @@ a minimal repro; several are 5.2-only regressions.
   `'COUNT'`. Wrong case raises with the valid list, so this one fails loudly.
 - **`nodes.remove()` invalidates Python references to sibling nodes** in the
   same tree. Fetch handles *after* removals, not before.
+- **Node group parameters only apply at creation.** `rig.set_parameter` writes
+  an interface default, which the evaluator honours the first time and then
+  freezes: later changes from Python are stored but ignored. Confirmed for
+  vector inputs against `tree.update_tag()`, object `update_tag()` and
+  reassigning `node_group` -- none help. Panel edits go through RNA rather than
+  plain assignment and behave normally. **Tests must build a fresh strand per
+  parameter value**; an in-place loop silently measures the first value over
+  and over, which is exactly how the bulb orientation first appeared to pass.
+- **Instance ordering is not stable between evaluations.** `depsgraph.object_instances`
+  hands back a bulb's child objects in varying order, so "the first instance"
+  is a different part each run. Pin the child by name. Centroids are no help
+  either -- the meshes are origin-centred, so a centroid can't see rotation.
 - **Resample-by-length near zero locks Blender up** trying to make unbounded
   points. The node tree hard-floors the spacing input; a user typing 0 must not
   be able to hang the app.

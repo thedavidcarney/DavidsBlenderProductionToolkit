@@ -529,14 +529,14 @@ if festoons is not None:
 # still instance. If hiding dropped it out of the depsgraph every strand in
 # the scene would silently lose its bulbs.
 bulbs = bulb_positions(strand)
-print("    bulb instances from hidden collection: " + str(bulbs))
+print("    bulb positions from excluded collection: " + str(bulbs))
 check(bulbs > 0,
-      "[bulb] no instances -- hiding the bulb source collection killed them")
+      "[bulb] no instances -- excluding the bulb source collection killed them")
 
-def layer_collection_hidden(name):
+def layer_collection_excluded(name):
     def walk(layer):
         if layer.collection.name == name:
-            return layer.hide_viewport
+            return layer.exclude
         for child in layer.children:
             found = walk(child)
             if found is not None:
@@ -544,8 +544,12 @@ def layer_collection_hidden(name):
         return None
     return walk(bpy.context.view_layer.layer_collection)
 
-check(layer_collection_hidden(rig.BULB_COLLECTION_NAME) is True,
-      "[bulb] bulb source collection should be hidden (eye off) in the view layer")
+# EXCLUDED, not merely eye-hidden. Most bulb source objects ship with
+# hide_render False, so an eye-hidden collection still renders and you get a
+# stray bulb at the world origin in every frame.
+check(layer_collection_excluded(rig.BULB_COLLECTION_NAME) is True,
+      "[bulb] bulb source collection should be EXCLUDED from the view layer, "
+      "or the source objects render as a stray bulb at the origin")
 
 # Instanced geometry should be the real bulb, not the fallback sphere. The
 # marquee bulb is ~0.14m across; the stand-in is a 0.06m sphere.
@@ -583,6 +587,99 @@ after = len([c for c in bpy.data.collections
 check(before == after,
       "[bulb] ensure_marquee_bulb appended a duplicate on the second call: "
       + str(before) + " -> " + str(after))
+
+
+# --- 11. Bulb base orientation ----------------------------------------------
+#
+# The bundled marquee bulb is modelled pointing along its local +Y and has to
+# hang down world -Z. The correction is NOT -90 degrees about X, which is the
+# obvious-looking answer: the asset's +Y already arrives at world +Z once
+# instanced, so it takes a 180 degree flip about X from there. That is measured
+# below rather than asserted from arithmetic, because the arithmetic version
+# was wrong and looked right.
+#
+# Each candidate gets a FRESH strand. Mutating one strand's parameters in place
+# does not re-evaluate on 5.2 (see rig.set_parameter), so an in-place loop
+# silently measures the first value over and over -- which is exactly how this
+# first appeared to pass.
+#
+# Measured on a named child object: instance ordering varies between
+# evaluations, so "the first instance" is a different part of the bulb each
+# run, and the bulb's meshes are origin-centred so centroids can't see rotation
+# either. The rotation basis of a pinned child is the only reading that works.
+
+print("=== 11. bulb base orientation ===")
+reset_scene()
+
+
+def bulb_facing(rotation, offset_y):
+    """Where the bulb asset's +Y ends up in world space, for a fresh strand."""
+    start = Vector((-4.0, offset_y, 3.0))
+    end = Vector((4.0, offset_y, 3.0))
+    strand = rig.create_strand(bpy.context, start, end,
+                               shape.default_sag_point(start, end))
+    modifier = strand.modifiers[0]
+    tree = modifier.node_group
+    for name, value in (("Random Tilt", 0.0), ("Random Spin", 0.0),
+                        ("Bulb Spacing", 3.0), ("Bulb Rotation", rotation)):
+        rig.set_parameter(tree, modifier, name, value)
+    bpy.context.view_layer.update()
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = strand.evaluated_get(depsgraph)
+    for instance in depsgraph.object_instances:
+        if (instance.is_instance and instance.parent == evaluated
+                and instance.object is not None
+                and instance.object.name == "Metal"):
+            basis = instance.matrix_world.to_3x3()
+            return (basis @ Vector((0.0, 1.0, 0.0))).normalized()
+    return None
+
+
+down = Vector((0.0, 0.0, -1.0))
+
+default_facing = bulb_facing(nodes.DEFAULT_BULB_ROTATION, 0.0)
+if check(default_facing is not None, "[orientation] no bulb instances to measure"):
+    alignment = default_facing.dot(down)
+    print("    default offset -> asset +Y points "
+          + str(tuple(round(c, 3) for c in default_facing))
+          + ", dot(-Z) = %.3f" % alignment)
+    check(alignment > 0.999,
+          "[orientation] bulbs do not hang down with the default offset: "
+          "asset +Y aligns with world -Z by " + str(round(alignment, 4)))
+
+# Different offsets must give genuinely different orientations. If two
+# candidates ever report the same basis, parameters have stopped applying and
+# every other assertion here is measuring stale geometry.
+zero_facing = bulb_facing((0.0, 0.0, 0.0), 4.0)
+if check(zero_facing is not None, "[orientation] no instances for the zero offset"):
+    print("    zero offset    -> asset +Y points "
+          + str(tuple(round(c, 3) for c in zero_facing)))
+    check((zero_facing - default_facing).length > 0.5,
+          "[orientation] zero and default offsets produced the same orientation "
+          "-- the Bulb Rotation input is not being applied at all")
+    check(zero_facing.dot(Vector((0.0, 0.0, 1.0))) > 0.999,
+          "[orientation] with no offset the asset's +Y should land on world +Z, "
+          "got " + str(tuple(round(c, 3) for c in zero_facing))
+          + " -- the bundled asset's native orientation has changed, so "
+            "DEFAULT_BULB_ROTATION needs re-measuring")
+
+# Random spin must default to off.
+spin_strand = rig.create_strand(
+    bpy.context, Vector((-4.0, 8.0, 3.0)), Vector((4.0, 8.0, 3.0)),
+    shape.default_sag_point(Vector((-4.0, 8.0, 3.0)), Vector((4.0, 8.0, 3.0))))
+fresh_spin = rig.get_parameter(spin_strand.modifiers[0].node_group, "Random Spin")
+print("    default Random Spin on a fresh strand: " + str(fresh_spin))
+check(abs(fresh_spin) < 1e-6,
+      "[orientation] Random Spin should default to 0, got " + str(fresh_spin))
+
+stored_rotation = rig.get_parameter(spin_strand.modifiers[0].node_group,
+                                    "Bulb Rotation")
+check(stored_rotation is not None
+      and abs(stored_rotation[0] - math.pi) < 1e-4,
+      "[orientation] Bulb Rotation default was clamped or lost: "
+      + str(tuple(stored_rotation) if stored_rotation else None)
+      + " (interface sockets clamp to min/max, which start at 0/0)")
 
 
 # --- Result -----------------------------------------------------------------
