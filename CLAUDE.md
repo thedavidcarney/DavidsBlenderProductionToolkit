@@ -403,6 +403,8 @@ tests/run_festoon_test.sh
 - `reset_scene()` in the festoon suite re-enables the addon: `read_factory_settings` resets PREFERENCES too, which disables it, and anything calling `bpy.ops.lightgroup.*` afterwards fails with "operator could not be found".
 - **`run_festoon_test.sh`** — builds real strands and inspects the evaluated geometry: the depth-peeling raycast skips hidden objects and festoon's own strands, the curve passes through the sag empty at every flatness, flatness broadens the bottom without moving the low point, bulb spacing responds, a parent move stays rigid, and each strand gets its own node group.
 
+**`bpy.ops` attribute access is entirely lazy** — `hasattr(bpy.ops.totally_fake, "nope")` is `True`, `dir(bpy.ops)` doesn't list registered categories, and even `.idname()` on a nonexistent operator returns without error. A `hasattr`-based existence check is therefore vacuous and will pass with every operator missing (this was live in the registration suite for several releases). Use `operator.get_rna_type().identifier`, which raises `KeyError` when unregistered and confirms the idname maps to the expected class.
+
 The `EXPECTED_*` lists in `tests/test_registration.py` are a deliberate contract — when a change legitimately renames or moves something, edit them on purpose rather than letting them drift. Beyond these, real testing is still loading the addon in Blender against a curated test scene (`tests/build_test_scene.py`).
 
 ## Roadmap / deferred work

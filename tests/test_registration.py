@@ -177,11 +177,32 @@ def assert_fully_registered(phase):
         check(hasattr(bpy.types, cls_name),
               "[" + phase + "] bpy.types." + cls_name + " missing")
 
+    # get_rna_type(), NOT hasattr.
+    #
+    # bpy.ops attribute access is entirely lazy: hasattr(bpy.ops.totally_fake,
+    # "nope") is True, and even .idname() on it returns without error. An
+    # earlier version of this check used hasattr and was therefore vacuous --
+    # it would have passed with every operator missing. get_rna_type() raises
+    # KeyError for an unregistered operator, and returns the class identifier,
+    # so it also confirms the idname maps to the class we expect rather than
+    # merely to something.
     for idname in EXPECTED_OPERATORS:
         category, _, name = idname.partition(".")
+        expected_class = category.upper() + "_OT_" + name
         group = getattr(bpy.ops, category, None)
-        check(group is not None and hasattr(group, name),
-              "[" + phase + "] operator " + idname + " does not resolve")
+        operator = getattr(group, name, None) if group is not None else None
+        if not check(operator is not None,
+                     "[" + phase + "] operator " + idname + " is not reachable"):
+            continue
+        try:
+            identifier = operator.get_rna_type().identifier
+        except (KeyError, RuntimeError, AttributeError) as error:
+            FAILURES.append("[" + phase + "] operator " + idname
+                            + " is not registered (" + type(error).__name__ + ")")
+            continue
+        check(identifier == expected_class,
+              "[" + phase + "] operator " + idname + " resolves to "
+              + identifier + ", expected " + expected_class)
 
     for panel, (space, tab) in EXPECTED_PANELS.items():
         cls = getattr(bpy.types, panel, None)
