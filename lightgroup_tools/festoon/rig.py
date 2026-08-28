@@ -1,13 +1,19 @@
 """Creates the objects that make up a festoon strand.
 
-Layout, one collection for everything:
+Layout:
 
-    Festoons/
+    Festoons/                 the strands you placed
       Festoon                 mesh + Geometry Nodes modifier
         Festoon_Start         empty, parented to the strand
         Festoon_End
         Festoon_Sag
-      Festoon_Bulb            default bulb source, hidden
+    Festoon Bulbs/            bulb SOURCES, hidden (eye off)
+      Marquee Bulb/           the bundled asset
+
+Bulb sources are a separate collection: Festoons should list the things you
+placed, and the objects being instanced are machinery. They stay IN the view
+layer though -- Collection Info instances what the depsgraph evaluates, so
+excluding them would empty every strand.
 
 The empties are children of the strand mesh whose modifier reads them. That
 sounds circular but isn't: Blender tracks object transform and object geometry
@@ -21,6 +27,8 @@ Object Info runs in RELATIVE space for the same reason: with parenting, that's
 what makes a parent move rigid instead of double-transformed.
 """
 
+import os
+
 import bmesh
 import bpy
 from mathutils import Vector
@@ -30,18 +38,30 @@ from .picking import CONTROL_PROP, STRAND_PROP
 
 COLLECTION_NAME = "Festoons"
 STRAND_BASE_NAME = "Festoon"
+
+# Bulb SOURCES live in their own collection, not mixed in with the strands.
+# Festoons/ should contain the things you placed; the objects being instanced
+# are machinery.
+BULB_COLLECTION_NAME = "Festoon Bulbs"
+
 BULB_NAME = "Festoon_Bulb"
 BULB_MATERIAL_NAME = "Festoon Bulb Emission"
 
-# Radius of the stand-in bulb, in metres. Roughly a real festoon globe.
+# Radius of the fallback stand-in bulb, in metres. Only used when the bundled
+# asset can't be loaded.
 DEFAULT_BULB_RADIUS = 0.03
 
+# Bundled bulb asset. A marquee bulb is a collection -- glass, filament,
+# fixture, metal, plus separate Cycles and EEVEE glass variants -- so it is
+# instanced as a collection rather than a single object.
+BULB_ASSET_FILE = "marquee_bulb.blend"
+BULB_ASSET_COLLECTION = "Marquee Bulb"
 
-def get_collection(scene):
-    """The Festoons collection, created and linked if needed."""
-    collection = bpy.data.collections.get(COLLECTION_NAME)
+
+def _get_or_link_collection(scene, name):
+    collection = bpy.data.collections.get(name)
     if collection is None:
-        collection = bpy.data.collections.new(COLLECTION_NAME)
+        collection = bpy.data.collections.new(name)
         scene.collection.children.link(collection)
         return collection
 
@@ -49,6 +69,84 @@ def get_collection(scene):
     if not linked:
         scene.collection.children.link(collection)
     return collection
+
+
+def get_collection(scene):
+    """The Festoons collection, holding the strands you placed."""
+    return _get_or_link_collection(scene, COLLECTION_NAME)
+
+
+def get_bulb_collection(scene):
+    """The collection holding bulb SOURCE objects.
+
+    Kept separate from Festoons so the strand list stays readable. The sources
+    have to remain in the view layer -- Collection Info instances what the
+    depsgraph evaluates, and excluding the collection would empty it -- so they
+    are hidden rather than excluded.
+    """
+    return _get_or_link_collection(scene, BULB_COLLECTION_NAME)
+
+
+def _asset_path(filename):
+    return os.path.join(os.path.dirname(os.path.realpath(__file__)), "assets", filename)
+
+
+def _hide_layer_collection(context, collection):
+    """Switch the eye off for a collection in the current view layer.
+
+    The eye is viewport visibility only, so the objects stay in the depsgraph
+    and remain instanceable. The monitor icon (collection.hide_viewport) would
+    drop them out entirely and the bulbs would vanish.
+    """
+    def walk(layer_collection):
+        if layer_collection.collection is collection:
+            layer_collection.hide_viewport = True
+            return True
+        return any(walk(child) for child in layer_collection.children)
+
+    try:
+        walk(context.view_layer.layer_collection)
+    except AttributeError:
+        pass
+
+
+def ensure_marquee_bulb(context):
+    """Append the bundled marquee bulb collection, or return it if present.
+
+    Returns None if the asset is missing, so callers can fall back to the
+    generated stand-in rather than producing a strand with no bulbs.
+    """
+    existing = bpy.data.collections.get(BULB_ASSET_COLLECTION)
+    if existing is not None:
+        return existing
+
+    path = _asset_path(BULB_ASSET_FILE)
+    if not os.path.isfile(path):
+        print("Festoon: bundled bulb asset missing at " + path)
+        return None
+
+    try:
+        with bpy.data.libraries.load(path, link=False) as (source, target):
+            if BULB_ASSET_COLLECTION not in source.collections:
+                print("Festoon: '" + BULB_ASSET_COLLECTION + "' not found in the bulb asset")
+                return None
+            target.collections = [BULB_ASSET_COLLECTION]
+    except Exception as error:  # noqa: BLE001 - a bad asset must not kill placement
+        print("Festoon: could not append the bulb asset: " + str(error))
+        return None
+
+    appended = bpy.data.collections.get(BULB_ASSET_COLLECTION)
+    if appended is None:
+        return None
+
+    # Park it under Festoon Bulbs and hide it. Appending does not link it to
+    # the scene, and an unlinked collection is not evaluated -- so without this
+    # Collection Info would hand back nothing.
+    bulbs = get_bulb_collection(context.scene)
+    if not any(child is appended for child in bulbs.children):
+        bulbs.children.link(appended)
+    _hide_layer_collection(context, bulbs)
+    return appended
 
 
 def _link_only(obj, collection):
@@ -109,7 +207,7 @@ def ensure_default_bulb(scene):
     mesh.materials.append(ensure_bulb_material())
 
     bulb = bpy.data.objects.new(BULB_NAME, mesh)
-    _link_only(bulb, get_collection(scene))
+    _link_only(bulb, get_bulb_collection(scene))
     bulb.hide_render = True
     try:
         bulb.hide_set(True)
@@ -213,7 +311,7 @@ def _make_empty(name, location, normal, collection, display_size):
 
 def create_strand(context, start, end, sag, flatness=1.0,
                   start_normal=None, end_normal=None, bulb_object=None,
-                  bulb_spacing=None):
+                  bulb_collection=None, bulb_spacing=None):
     """Build a complete strand. Returns the strand mesh object."""
     scene = context.scene
     collection = get_collection(scene)
@@ -259,16 +357,24 @@ def create_strand(context, start, end, sag, flatness=1.0,
         # placement preview just drew.
         set_parameter(tree, modifier, "Bulb Spacing", bulb_spacing)
 
+    # Prefer whatever the user picked; otherwise fall back to the bundled
+    # marquee bulb, and to a generated sphere only if that asset is missing.
+    if bulb_object is None and bulb_collection is None:
+        bulb_collection = ensure_marquee_bulb(context)
+        if bulb_collection is None:
+            bulb_object = ensure_default_bulb(scene)
+
     set_strand_targets(tree,
                        start=start_empty,
                        end=end_empty,
                        sag=sag_empty,
-                       bulb=bulb_object or ensure_default_bulb(scene))
+                       bulb=bulb_object,
+                       bulb_collection=bulb_collection)
     return strand
 
 
 def set_strand_targets(tree, start=None, end=None, sag=None, bulb=None,
-                       cable_material=None):
+                       bulb_collection=None, cable_material=None):
     """Point a strand's node group at its objects.
 
     Assigned straight onto the nodes, NOT through modifier inputs: an Object
@@ -280,6 +386,7 @@ def set_strand_targets(tree, start=None, end=None, sag=None, bulb=None,
         (nodes.NODE_END_INFO, "Object", end),
         (nodes.NODE_SAG_INFO, "Object", sag),
         (nodes.NODE_BULB_INFO, "Object", bulb),
+        (nodes.NODE_BULB_COLLECTION, "Collection", bulb_collection),
         (nodes.NODE_CABLE_MATERIAL, "Material", cable_material),
     )
     for node_name, socket_name, value in targets:

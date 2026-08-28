@@ -18,6 +18,8 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
     ├── overlay.py         viewport preview drawn during placement
     ├── nodes.py           builds the Festoon Strand node group
     ├── rig.py             strand mesh, empties, collection
+    └── assets/
+        └── marquee_bulb.blend   bundled default bulb
     ├── operators.py       modal placement
     └── panels.py
 ```
@@ -148,8 +150,13 @@ Three clicks: start, end, sag. The sag shape carries to the next strand, and
 placement stays active until you escape, so a run of similar strands is fast.
 Scroll during the sag step adjusts flatness.
 
-**Scene layout** — one `Festoons` collection; the three control empties are
-parented to the strand mesh whose modifier reads them. Not a dependency cycle:
+**Scene layout** — `Festoons/` holds the strands you placed (the three control
+empties are parented to the strand mesh whose modifier reads them);
+`Festoon Bulbs/` holds the bulb SOURCES, hidden with the eye. Sources are kept
+out of `Festoons` so the strand list stays readable, but they must stay IN the
+view layer — Collection Info instances what the depsgraph evaluates, so
+excluding them (monitor icon / exclude checkbox) empties every strand. The eye
+is viewport-only and safe. Not a dependency cycle:
 Blender models object transform and object geometry as separate depsgraph
 components (verified). Each strand collapses to one outliner row, and moving
 the strand mesh moves the whole thing rigidly.
@@ -170,6 +177,22 @@ Drawing is best-effort: any GPU error disables the overlay and lets placement co
 **Bulbs are instanced, uniform scale, no size randomness** — real bulbs are
 manufactured identical. Rotation randomness (tilt + spin) is wanted and is
 there.
+
+**The default bulb is a bundled COLLECTION**, `assets/marquee_bulb.blend`,
+appended on first use. Real bulb assets are multi-object (glass, filament,
+fixture, metal, plus separate Cycles and EEVEE glass variants — the EEVEE one
+ships `hide_render=True` so Cycles picks the right one on its own), so the node
+group takes both a Collection Info and an Object Info and joins them: fill
+either socket, or neither for bare cable. `Separate Children` is OFF, so the
+whole collection is ONE bulb rather than each object becoming its own.
+
+Stripped from David's 33MB asset-library file to 654KB by dropping a packed
+environment EXR the bulb never referenced. A bulb is ~0.14m wide and 0.24m
+tall, which is what makes the 0.5m default spacing sensible.
+
+Because one bulb emits N depsgraph instances, tests count distinct instance
+POSITIONS, not raw instances — otherwise bulb counts would depend on how the
+asset happens to be modelled.
 
 **Lightgroups:** strands are tagged with a `festoon_strand` custom property.
 Nothing is auto-assigned at placement (see the memory on that). The tag exists

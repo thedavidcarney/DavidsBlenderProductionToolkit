@@ -34,6 +34,7 @@ class FESTOON_PT_main_panel(bpy.types.Panel):
 
         layout.separator()
         layout.label(text="New strands use:")
+        layout.prop(settings, "bulb_collection")
         layout.prop(settings, "bulb_object")
         layout.prop(settings, "bulb_spacing")
         layout.prop(settings, "flatness", slider=True)
@@ -102,9 +103,14 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
         # Bulb and cable material live on nodes inside the strand's own group,
         # not on modifier inputs -- an Object on a modifier input hangs Blender
         # 5.2. See nodes.create_group(). Edit them through the node sockets.
+        collection_node = rig.strand_node(strand, festoon_nodes.NODE_BULB_COLLECTION)
+        if collection_node is not None:
+            layout.prop(collection_node.inputs["Collection"], "default_value",
+                        text="Bulb Collection")
+
         bulb_node = rig.strand_node(strand, festoon_nodes.NODE_BULB_INFO)
         if bulb_node is not None:
-            layout.prop(bulb_node.inputs["Object"], "default_value", text="Bulb")
+            layout.prop(bulb_node.inputs["Object"], "default_value", text="Bulb Object")
 
         material_node = rig.strand_node(strand, festoon_nodes.NODE_CABLE_MATERIAL)
         if material_node is not None:

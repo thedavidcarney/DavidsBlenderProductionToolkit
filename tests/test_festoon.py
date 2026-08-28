@@ -73,14 +73,23 @@ def evaluated_vertices(obj):
     return [matrix @ v.co for v in data.vertices]
 
 
-def instance_count(obj):
+def bulb_positions(obj):
+    """How many BULBS a strand produces, not how many instances.
+
+    A real bulb asset is a collection -- the bundled marquee bulb is five
+    objects -- so one bulb position emits five depsgraph instances. Counting
+    raw instances would make bulb counts depend on how the asset happens to be
+    modelled. Distinct instance positions is the number that actually means
+    "bulbs on the cable".
+    """
     depsgraph = bpy.context.evaluated_depsgraph_get()
     evaluated = obj.evaluated_get(depsgraph)
-    total = 0
+    seen = set()
     for instance in depsgraph.object_instances:
         if instance.is_instance and instance.parent == evaluated:
-            total += 1
-    return total
+            location = instance.matrix_world.translation
+            seen.add((round(location.x, 4), round(location.y, 4), round(location.z, 4)))
+    return len(seen)
 
 
 # --- 1. Raycast skips objects the user can't see ----------------------------
@@ -235,7 +244,7 @@ vertices = evaluated_vertices(strand)
 check(len(vertices) > 0, "[rig] strand generated no geometry at all")
 print("    cable vertices: " + str(len(vertices)))
 
-bulbs = instance_count(strand)
+bulbs = bulb_positions(strand)
 print("    bulb instances: " + str(bulbs))
 check(bulbs > 0, "[rig] no bulbs instanced")
 
@@ -299,7 +308,7 @@ counts = {}
 for spacing in (1.0, 0.25):
     rig.set_parameter(tree, modifier, "Bulb Spacing", spacing)
     bpy.context.view_layer.update()
-    counts[spacing] = instance_count(strand)
+    counts[spacing] = bulb_positions(strand)
     print("    spacing %-5s -> %d bulbs" % (spacing, counts[spacing]))
 
 check(counts[0.25] > counts[1.0] * 2,
@@ -478,6 +487,102 @@ check(shape.resample_polyline(curve, 0.0) == [],
       "[preview] zero spacing should yield no points, not a hang")
 check(shape.resample_polyline([], 0.5) == [],
       "[preview] empty polyline should yield no points")
+
+
+# --- 10. Bundled marquee bulb + bulb source collection ----------------------
+
+print("=== 10. bundled bulb asset ===")
+reset_scene()
+
+start = Vector((-4.0, 0.0, 3.0))
+end = Vector((4.0, 0.0, 3.0))
+strand = rig.create_strand(bpy.context, start, end,
+                           shape.default_sag_point(start, end))
+bpy.context.view_layer.update()
+
+# The bundled asset must actually load, not silently fall back to the sphere.
+marquee = bpy.data.collections.get(rig.BULB_ASSET_COLLECTION)
+if check(marquee is not None,
+         "[bulb] bundled '" + rig.BULB_ASSET_COLLECTION
+         + "' collection did not load from the addon assets folder"):
+    names = sorted(o.name for o in marquee.all_objects)
+    print("    bulb objects: " + str(names))
+    check(len(names) >= 4,
+          "[bulb] marquee bulb should be a multi-object collection, got " + str(names))
+
+# Sources belong in their own collection, NOT mixed in with the strands.
+bulb_collection = bpy.data.collections.get(rig.BULB_COLLECTION_NAME)
+if check(bulb_collection is not None,
+         "[bulb] '" + rig.BULB_COLLECTION_NAME + "' collection was not created"):
+    check(any(c is marquee for c in bulb_collection.children),
+          "[bulb] marquee bulb is not parented under " + rig.BULB_COLLECTION_NAME)
+
+festoons = bpy.data.collections.get(rig.COLLECTION_NAME)
+if festoons is not None:
+    stray = [o.name for o in festoons.objects if "Bulb" in o.name]
+    check(not stray,
+          "[bulb] bulb sources are polluting the Festoons collection: " + str(stray))
+    check(not any(c is marquee for c in festoons.children),
+          "[bulb] marquee bulb collection is nested under Festoons")
+
+# The load-bearing part: the source collection is HIDDEN (eye off) and must
+# still instance. If hiding dropped it out of the depsgraph every strand in
+# the scene would silently lose its bulbs.
+bulbs = bulb_positions(strand)
+print("    bulb instances from hidden collection: " + str(bulbs))
+check(bulbs > 0,
+      "[bulb] no instances -- hiding the bulb source collection killed them")
+
+def layer_collection_hidden(name):
+    def walk(layer):
+        if layer.collection.name == name:
+            return layer.hide_viewport
+        for child in layer.children:
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+    return walk(bpy.context.view_layer.layer_collection)
+
+check(layer_collection_hidden(rig.BULB_COLLECTION_NAME) is True,
+      "[bulb] bulb source collection should be hidden (eye off) in the view layer")
+
+# Instanced geometry should be the real bulb, not the fallback sphere. The
+# marquee bulb is ~0.14m across; the stand-in is a 0.06m sphere.
+depsgraph = bpy.context.evaluated_depsgraph_get()
+evaluated_strand = strand.evaluated_get(depsgraph)
+widest = 0.0
+for instance in depsgraph.object_instances:
+    if instance.is_instance and instance.parent == evaluated_strand:
+        source = instance.object
+        if source and source.type == 'MESH':
+            widest = max(widest, max(source.dimensions))
+print("    largest instanced object dimension: %.4f m" % widest)
+check(widest > 0.1,
+      "[bulb] instanced geometry looks like the fallback sphere, not the "
+      "marquee bulb (largest dimension " + str(round(widest, 4)) + "m)")
+
+# A user-supplied collection must win over the bundled default.
+custom = bpy.data.collections.new("My Custom Bulb")
+bpy.context.scene.collection.children.link(custom)
+custom_strand = rig.create_strand(
+    bpy.context, Vector((-4.0, 6.0, 3.0)), Vector((4.0, 6.0, 3.0)),
+    shape.default_sag_point(Vector((-4.0, 6.0, 3.0)), Vector((4.0, 6.0, 3.0))),
+    bulb_collection=custom)
+node = rig.strand_node(custom_strand, nodes.NODE_BULB_COLLECTION)
+if check(node is not None, "[bulb] strand has no bulb collection node"):
+    check(node.inputs["Collection"].default_value is custom,
+          "[bulb] explicit bulb collection was overridden by the default")
+
+# Calling again must not append a second copy of the asset.
+before = len([c for c in bpy.data.collections
+              if c.name.startswith(rig.BULB_ASSET_COLLECTION)])
+rig.ensure_marquee_bulb(bpy.context)
+after = len([c for c in bpy.data.collections
+             if c.name.startswith(rig.BULB_ASSET_COLLECTION)])
+check(before == after,
+      "[bulb] ensure_marquee_bulb appended a duplicate on the second call: "
+      + str(before) + " -> " + str(after))
 
 
 # --- Result -----------------------------------------------------------------

@@ -40,9 +40,12 @@ class FestoonSettings(bpy.types.PropertyGroup):
         name="Flatness", default=shape.DEFAULT_FLATNESS,
         min=shape.MIN_FLATNESS, max=shape.MAX_FLATNESS,
         description="How flat the bottom of the curve is. Low is a sharp V, high is a broad swag")
+    bulb_collection: bpy.props.PointerProperty(
+        name="Bulb Collection", type=bpy.types.Collection,
+        description="Collection instanced as one bulb. Leave empty for the bundled marquee bulb")
     bulb_object: bpy.props.PointerProperty(
-        name="Bulb", type=bpy.types.Object,
-        description="Object instanced along the cable. Leave empty to use the built-in stand-in")
+        name="Bulb Object", type=bpy.types.Object,
+        description="Single object instanced as the bulb. Only needed if you aren't using a collection")
     bulb_spacing: bpy.props.FloatProperty(
         name="Bulb Spacing", default=0.5, min=0.01, max=100.0, unit='LENGTH',
         description="Distance between bulbs on new strands. Also drives the placement preview")
@@ -115,6 +118,7 @@ class FESTOON_OT_place_strand(bpy.types.Operator):
             start_normal=self.start_normal,
             end_normal=self.end_normal,
             bulb_object=settings.bulb_object,
+            bulb_collection=settings.bulb_collection,
             bulb_spacing=settings.bulb_spacing,
         )
 

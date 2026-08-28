@@ -55,6 +55,7 @@ NODE_START_INFO = "Festoon Start Info"
 NODE_END_INFO = "Festoon End Info"
 NODE_SAG_INFO = "Festoon Sag Info"
 NODE_BULB_INFO = "Festoon Bulb Info"
+NODE_BULB_COLLECTION = "Festoon Bulb Collection"
 NODE_CABLE_MATERIAL = "Festoon Cable Material"
 
 # FLATNESS_TO_EXPONENT / EXPONENT_MIN / EXPONENT_MAX are imported from shape.py
@@ -326,15 +327,33 @@ def create_group():
                          label="never zero"),
                    bulb_points.inputs["Length"])
 
+    # Two bulb sources, joined. A real bulb asset is usually a COLLECTION --
+    # glass, filament, fixture, metal as separate objects, often with per-engine
+    # variants -- while a quick stand-in is a single object. Rather than make
+    # the user pick a mode, both sockets exist and whichever is filled
+    # contributes. Setting neither yields cable with no bulbs.
     bulb_source = tree.nodes.new("GeometryNodeObjectInfo")
     bulb_source.name = NODE_BULB_INFO
-    bulb_source.label = "Bulb"
+    bulb_source.label = "Bulb object"
     bulb_source.transform_space = 'RELATIVE'
     bulb_source.inputs["As Instance"].default_value = True
 
+    bulb_collection = tree.nodes.new("GeometryNodeCollectionInfo")
+    bulb_collection.name = NODE_BULB_COLLECTION
+    bulb_collection.label = "Bulb collection"
+    bulb_collection.transform_space = 'RELATIVE'
+    # Separate Children off: the whole collection is ONE bulb. On, every object
+    # in it would become its own bulb strung along the cable.
+    bulb_collection.inputs["Separate Children"].default_value = False
+
+    bulb_join = tree.nodes.new("GeometryNodeJoinGeometry")
+    bulb_join.label = "Bulb source"
+    tree.links.new(bulb_source.outputs["Geometry"], bulb_join.inputs["Geometry"])
+    tree.links.new(bulb_collection.outputs["Instances"], bulb_join.inputs["Geometry"])
+
     instances = tree.nodes.new("GeometryNodeInstanceOnPoints")
     tree.links.new(bulb_points.outputs["Curve"], instances.inputs["Points"])
-    tree.links.new(bulb_source.outputs["Geometry"], instances.inputs["Instance"])
+    tree.links.new(bulb_join.outputs["Geometry"], instances.inputs["Instance"])
 
     # --- Per-bulb random orientation -------------------------------------
     # data_type MUST be set before touching Min/Max: from Blender 5.2 the node
