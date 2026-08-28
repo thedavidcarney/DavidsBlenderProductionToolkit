@@ -110,9 +110,12 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
                 continue
             layout.prop(item, "default_value", text=name)
 
-        # Bulb and cable material live on nodes inside the strand's own group,
-        # not on modifier inputs -- an Object on a modifier input hangs Blender
-        # 5.2. See nodes.create_group(). Edit them through the node sockets.
+        # Bulb object/collection live on NODES rather than modifier inputs,
+        # unlike Cable Material above. Not because a datablock socket can't be
+        # exposed -- it can -- but because these two are the ones this addon
+        # assigns from Python at creation time, and that specific write
+        # (modifier.properties.inputs[...] = datablock) is what hangs 5.2.
+        # See nodes.create_group().
         collection_node = rig.strand_node(strand, festoon_nodes.NODE_BULB_COLLECTION)
         if collection_node is not None:
             layout.prop(collection_node.inputs["Collection"], "default_value",
@@ -122,10 +125,12 @@ class FESTOON_PT_strand_panel(bpy.types.Panel):
         if bulb_node is not None:
             layout.prop(bulb_node.inputs["Object"], "default_value", text="Bulb Object")
 
-        material_node = rig.strand_node(strand, festoon_nodes.NODE_CABLE_MATERIAL)
-        if material_node is not None:
-            layout.prop(material_node.inputs["Material"], "default_value",
-                        text="Cable Material")
+        # Cable Material is deliberately NOT drawn here. It is a real modifier
+        # input, and for a linked group input the interface default stores but
+        # never applies -- only the modifier's own value does, and only Blender's
+        # UI can write that. Drawing it here would be an inert control that
+        # looks like it works.
+        layout.label(text="Cable Material: in the Modifier panel", icon='MATERIAL')
 
         layout.separator()
         layout.operator("festoon.select_controls", icon='EMPTY_AXIS')

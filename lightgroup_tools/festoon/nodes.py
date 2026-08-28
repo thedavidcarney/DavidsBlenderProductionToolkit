@@ -479,6 +479,10 @@ def create_group(mode=MODE_STRAND):
                description="1 is a plain cable. 2-3 twisted, like christmas lights. 4+ reads as braided")
     _new_input(tree, 'NodeSocketFloat', "Cable Twist", 1.5, 0.0, 20.0,
                description="Turns per metre. Ignored when Cable Strands is 1")
+    # Exposed as a real modifier input, unlike the bulb object/collection.
+    # Nothing here ever assigns it from Python -- that specific write is what
+    # hangs 5.2 -- so it is safe to surface where people expect to find it.
+    _new_input(tree, 'NodeSocketMaterial', "Cable Material")
     _new_input(tree, 'NodeSocketFloat', "Random Tilt", 0.15, 0.0, 1.0,
                description="How much each bulb tips off vertical")
     _new_input(tree, 'NodeSocketFloat', "Random Spin", 0.0, 0.0, 1.0,
@@ -584,6 +588,7 @@ def create_group(mode=MODE_STRAND):
     cable_material.name = NODE_CABLE_MATERIAL
     cable_material.label = "Cable material"
     tree.links.new(to_mesh.outputs["Mesh"], cable_material.inputs["Geometry"])
+    tree.links.new(inp["Cable Material"], cable_material.inputs["Material"])
 
     # --- Bulbs -----------------------------------------------------------
     # Resample by LENGTH rather than count: Blender divides the curve evenly to

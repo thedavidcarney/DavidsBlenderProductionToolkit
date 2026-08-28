@@ -202,6 +202,17 @@ And `Search Radius` must clear the object, or every ray starts inside it and
 the helix collapses onto the axis; `create_spiral` sizes it from the target's
 dimensions.
 
+**The wrap axis is re-centred on the target.** Both clicks land on the object's
+SURFACE, so the raw base-to-top line runs up one side rather than through the
+middle. Rays cast inward from an off-centre axis reach the surface at angles
+that don't advance evenly with the helix parameter — the wrap crawls around one
+side and then lurches to catch up, once per turn, which reads in the viewport
+as the string shooting straight up before starting the next loop. `create_spiral`
+projects both clicks onto the line through the object's bounding-box centre,
+keeping the height range and tilt the user chose. Pinned by a test that measures
+the angular step between consecutive spine points and fails if the largest is
+more than 1.6x the median.
+
 Sample count scales with `Turns` (24 per turn), because a 64-point curve at 6
 turns is ten points per turn and reads as a polygon.
 
@@ -261,16 +272,25 @@ are otherwise independent.
 Found the hard way while building Festoon Clicker. All verified by reducing to
 a minimal repro; several are 5.2-only regressions.
 
-- **ANY datablock on a geometry nodes MODIFIER input hangs Blender.** Object,
-  Material and Collection inputs all reproduce it. Hard hang, no error, GUI
-  and background alike. Reduces to five nodes (Object Info
+- **ASSIGNING a datablock to a modifier input FROM PYTHON hangs Blender.**
+  `modifier.properties.inputs[identifier] = <Object|Material|Collection>`
+  then evaluating is a hard hang, no error, GUI and background alike.
+  
+  The socket itself is fine, and this is narrower than it first looked:
+  datablock sockets CAN be exposed as modifier inputs, assigned through
+  the interface default (`item.default_value = ...`), and edited by the
+  user in the modifier panel. All verified. Only the Python write to
+  `properties.inputs` is poisoned. Reduces to five nodes (Object Info
   → Curve Line → Resample). 5.0 and 5.1 run the identical setup fine. Setting
   the object straight onto the Object Info node avoids it. **This is why each
   strand gets its own node group** — node datablocks are per-tree. If this is
-  ever fixed, datablocks can move back onto modifier inputs and a single group
-  can be shared again. **This is why Cable Material has no slot in the modifier
-  panel** — it cannot have one on 5.2. It lives on the Set Material node and is
-  exposed through the Festoon Clicker sidebar instead.
+  ever fixed, a single group can be shared again.
+  
+  Consequence for festoon: **Cable Material IS a normal modifier input**,
+  because nothing assigns it from Python. Bulb Object and Bulb Collection are
+  not — those are set at creation time, which is exactly the poisoned write —
+  so they live on nodes and are exposed through the sidebar. That asymmetry is
+  deliberate, not an oversight.
 - **Modifier inputs cannot be written from Python at all on 5.2.**
   `modifier.properties.inputs.<Socket_N>` is a read-only RNA *pointer*;
   `modifier[identifier]` raises (it worked on 5.0/5.1); and the IDProperty

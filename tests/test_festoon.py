@@ -938,6 +938,157 @@ check(spiral.modifiers[0].node_group.name.startswith(nodes.SPIRAL_GROUP_BASE_NAM
       + spiral.modifiers[0].node_group.name)
 
 
+# --- 15. Spiral axis is centred on the target -------------------------------
+#
+# Both clicks land on the object's SURFACE, so the raw base-to-top line runs up
+# one side. Rays cast inward from an off-centre axis reach the surface at angles
+# that don't advance evenly with the helix parameter: the wrap crawls round one
+# side then lurches to catch up, once per turn, which reads in the viewport as
+# the string shooting straight up before starting the next loop.
+#
+# Measured as the angular sweep between consecutive spine points. A centred
+# axis gives a near-constant step; an off-centre one spikes.
+
+print("=== 15. spiral axis centring ===")
+reset_scene()
+
+cyl_mesh = bpy.data.meshes.new("Column")
+bm = bmesh.new()
+bmesh.ops.create_cone(bm, cap_ends=True, segments=32,
+                      radius1=0.5, radius2=0.5, depth=4.0)
+bm.to_mesh(cyl_mesh)
+bm.free()
+column = bpy.data.objects.new("Column", cyl_mesh)
+bpy.context.scene.collection.objects.link(column)
+column.location = (0.0, 0.0, 2.0)
+bpy.context.view_layer.update()
+
+PROFILE_RESOLUTION = 6
+
+
+def spine_points(spiral):
+    """Recover the spine in order from the generated cable.
+
+    Curve to Mesh emits one ring of PROFILE_RESOLUTION verts per curve point,
+    in order, so each ring's centre is a spine point. There is no way to read
+    an intermediate node's output directly, and the ordering is what matters
+    here -- unordered vertices can't show a discontinuity.
+    """
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = spiral.evaluated_get(depsgraph)
+    if evaluated.data is None:
+        return []
+    points = [evaluated.matrix_world @ v.co for v in evaluated.data.vertices]
+    centres = []
+    for index in range(0, len(points) - PROFILE_RESOLUTION + 1, PROFILE_RESOLUTION):
+        ring = points[index:index + PROFILE_RESOLUTION]
+        centres.append(sum(ring, Vector()) / len(ring))
+    return centres
+
+
+def sweep_uniformity(spiral):
+    """(largest, median) angular step between consecutive spine points."""
+    centres = spine_points(spiral)
+    if len(centres) < 4:
+        return None
+    steps = []
+    previous = None
+    for point in centres:
+        angle = math.atan2(point.y, point.x)
+        if previous is not None:
+            delta = abs(angle - previous)
+            # Ignore the -pi/+pi seam, which is a wrap not a jump.
+            if delta < math.pi:
+                steps.append(delta)
+        previous = angle
+    if not steps:
+        return None
+    steps_sorted = sorted(steps)
+    return max(steps), steps_sorted[len(steps_sorted) // 2]
+
+
+# Clicked on the SURFACE, which is what actually happens in the viewport.
+offset_spiral = rig.create_spiral(bpy.context,
+                                  Vector((0.5, 0.0, 0.3)),
+                                  Vector((0.5, 0.0, 3.7)),
+                                  column, turns=4.0)
+modifier = offset_spiral.modifiers[0]
+rig.set_parameter(modifier.node_group, modifier, "Cable Strands", 1)
+rig.set_parameter(modifier.node_group, modifier, "Cable Radius", 0.001)
+bpy.context.view_layer.update()
+
+result = sweep_uniformity(offset_spiral)
+if check(result is not None, "[spiral] could not measure the angular sweep"):
+    largest, median = result
+    print("    surface-clicked: largest step %.1f deg, median %.1f deg"
+          % (math.degrees(largest), math.degrees(median)))
+    check(largest < median * 1.6,
+          "[spiral] the sweep is uneven -- largest angular step "
+          + str(round(math.degrees(largest), 1)) + " deg vs median "
+          + str(round(math.degrees(median), 1))
+          + " deg. The axis is not centred on the target, so the wrap lurches "
+            "once per turn.")
+
+# The empties must sit on the centred axis, not where the user clicked, so the
+# axis they represent is the one actually being used.
+controls = [o for o in bpy.data.objects if o.parent is offset_spiral]
+check(len(controls) == 2,
+      "[spiral] expected base and top empties, got " + str(len(controls)))
+for control in controls:
+    radial = math.hypot(control.location.x, control.location.y)
+    check(radial < 0.05,
+          "[spiral] control empty " + control.name + " is " + str(round(radial, 3))
+          + "m off the column's centre line; it should have been projected onto it")
+
+
+# --- 16. Cable Material is a real modifier input ----------------------------
+#
+# David pointed out it had no slot in the geometry nodes panel. It can have
+# one: what hangs 5.2 is assigning a datablock to a modifier input FROM PYTHON
+# (modifier.properties.inputs[...] = value). Interface defaults and UI edits
+# are both fine, and nothing here assigns the material, so it is exposed
+# normally. Bulb object/collection stay on nodes because those ARE assigned
+# from Python at creation.
+
+print("=== 16. cable material exposed ===")
+
+strand_start, strand_end = Vector((-4.0, 8.0, 3.0)), Vector((4.0, 8.0, 3.0))
+material_strand = rig.create_strand(bpy.context, strand_start, strand_end,
+                                    shape.default_sag_point(strand_start, strand_end))
+material_tree = material_strand.modifiers[0].node_group
+
+item = rig.interface_input(material_tree, "Cable Material")
+check(item is not None,
+      "[material] Cable Material is not a modifier input; it should appear in "
+      "the geometry nodes panel")
+
+set_material = material_tree.nodes.get(nodes.NODE_CABLE_MATERIAL)
+if check(set_material is not None, "[material] Set Material node missing"):
+    check(set_material.inputs["Material"].is_linked,
+          "[material] Set Material is not driven by the group input, so the "
+          "modifier slot would do nothing")
+
+# Setting it from Python must at least be SAFE. set_parameter refuses to write
+# a datablock to the modifier input, because that write hangs 5.2 rather than
+# raising -- so the try/except around it cannot catch it and Blender simply
+# stops. Reaching the line after this call is the assertion.
+cable_material = bpy.data.materials.new("TestCable")
+rig.set_parameter(material_tree, material_strand.modifiers[0],
+                  "Cable Material", cable_material)
+bpy.context.view_layer.update()
+print("    set_parameter with a datablock returned without hanging")
+
+# It is NOT expected to reach the geometry. For a linked group input the
+# interface default stores but never applies -- verified directly: the same
+# material set on the Set Material NODE does apply, set as the interface
+# default it does not. Only the modifier's own value drives it, and only
+# Blender's UI can write that. This is why the sidebar doesn't draw a material
+# row: it would be an inert control that looks functional.
+stored = rig.get_parameter(material_tree, "Cable Material")
+check(stored is cable_material,
+      "[material] interface default did not store the material")
+
+
 _VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 

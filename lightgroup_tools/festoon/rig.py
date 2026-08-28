@@ -307,7 +307,13 @@ def set_parameter(tree, modifier, name, value):
     except (TypeError, AttributeError):
         return False
 
-    if modifier is not None:
+    # NEVER write a datablock to the modifier input. On 5.2 that specific
+    # write HANGS Blender rather than raising, so the try/except below cannot
+    # catch it -- the application simply stops. The interface default set above
+    # is what drives the result anyway.
+    is_datablock = isinstance(value, bpy.types.ID)
+
+    if modifier is not None and not is_datablock:
         properties = getattr(modifier, "properties", None)
         container = properties.inputs if properties is not None else modifier
         try:
@@ -407,7 +413,7 @@ def create_strand(context, start, end, sag, flatness=1.0,
 
 
 def set_strand_targets(tree, start=None, end=None, sag=None, bulb=None,
-                       bulb_collection=None, cable_material=None):
+                       bulb_collection=None):
     """Point a strand's node group at its objects.
 
     Assigned straight onto the nodes, NOT through modifier inputs: an Object
@@ -420,7 +426,6 @@ def set_strand_targets(tree, start=None, end=None, sag=None, bulb=None,
         (nodes.NODE_SAG_INFO, "Object", sag),
         (nodes.NODE_BULB_INFO, "Object", bulb),
         (nodes.NODE_BULB_COLLECTION, "Collection", bulb_collection),
-        (nodes.NODE_CABLE_MATERIAL, "Material", cable_material),
     )
     for node_name, socket_name, value in targets:
         if value is None:
@@ -438,6 +443,36 @@ def strand_node(strand, node_name):
     return modifier.node_group.nodes.get(node_name)
 
 
+def _centre_axis_on(target, base, top):
+    """Slide the clicked axis onto the target's centre line.
+
+    Both clicks land on the object's SURFACE, so the raw base-to-top line runs
+    up one side of the trunk rather than through the middle. Rays cast inward
+    from an off-centre axis reach the surface at angles that do not advance
+    evenly with the helix parameter -- the wrap crawls around one side and then
+    lurches to catch up, once per turn, and near-tangent rays jump or miss
+    outright.
+
+    Projecting both clicks onto the line through the object's centre keeps the
+    height range and the tilt the user chose, and makes the sweep uniform.
+    """
+    base = Vector(base)
+    top = Vector(top)
+    if target is None:
+        return base, top
+
+    direction = top - base
+    if direction.length < 1e-6:
+        return base, top
+    direction.normalize()
+
+    corners = [target.matrix_world @ Vector(corner) for corner in target.bound_box]
+    centre = sum(corners, Vector()) / len(corners)
+
+    return (centre + direction * (base - centre).dot(direction),
+            centre + direction * (top - centre).dot(direction))
+
+
 def create_spiral(context, base, top, target, bulb_object=None,
                   bulb_collection=None, bulb_spacing=None, turns=None):
     """Wrap a light string around an object.
@@ -451,6 +486,7 @@ def create_spiral(context, base, top, target, bulb_object=None,
     collection = get_collection(scene)
     tree = nodes.create_group(mode=nodes.MODE_SPIRAL)
 
+    base, top = _centre_axis_on(target, base, top)
     height = (Vector(top) - Vector(base)).length
     display_size = max(0.05, min(0.5, height * 0.05))
 
