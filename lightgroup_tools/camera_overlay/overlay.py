@@ -32,6 +32,9 @@ _shader_failed = False
 _texture = None
 _texture_key = None
 _status = ""
+# Set when the draw handler has thrown. Sticky, so one bad frame does not
+# become an error every redraw; cleared by toggling Enable.
+_draw_failed = False
 
 
 # --- Status -----------------------------------------------------------------
@@ -64,11 +67,18 @@ void main()
 
 # One shader serves both modes. The mask branch is a per-pixel operation and
 # belongs here rather than in a Python pixel loop.
+# `maskMode` and `invert` are INT, not BOOL, on purpose. A bool inside a
+# push-constant block has genuinely ambiguous size (1 byte or 4 depending on
+# the layout rules applied), and Metal emulates push constants differently
+# again -- and Metal is the one backend that cannot be tested from here.
+# An int is 4 bytes with well-defined layout on OpenGL, Vulkan and Metal
+# alike, and `uniform_int` has none of `uniform_bool`'s scalar-vs-sequence
+# arity history. Same behaviour, one less untestable assumption.
 _FRAGMENT_SOURCE = """
 void main()
 {
   vec4 t = texture(image, uvInterp);
-  if (!maskMode) {
+  if (maskMode == 0) {
     fragColor = vec4(t.rgb, t.a * opacity);
   } else {
     float v = channel == 0 ? dot(t.rgb, vec3(0.299, 0.587, 0.114))
@@ -76,8 +86,9 @@ void main()
             : channel == 2 ? t.g
             : channel == 3 ? t.b
             : t.a;
-    bool vis = invert ? (v < threshold) : (v > threshold);
-    float intensity = invert ? (1.0 - v) : v;
+    bool inverted = invert != 0;
+    bool vis = inverted ? (v < threshold) : (v > threshold);
+    float intensity = inverted ? (1.0 - v) : v;
     fragColor = vis ? vec4(tint * intensity, opacity) : vec4(0.0);
   }
 }
@@ -108,8 +119,8 @@ def get_shader():
         info.push_constant('FLOAT', "threshold")
         info.push_constant('VEC3', "tint")
         info.push_constant('INT', "channel")
-        info.push_constant('BOOL', "invert")
-        info.push_constant('BOOL', "maskMode")
+        info.push_constant('INT', "invert")
+        info.push_constant('INT', "maskMode")
         info.sampler(0, 'FLOAT_2D', "image")
         info.vertex_in(0, 'VEC2', "pos")
         info.vertex_in(1, 'VEC2', "texCoord")
@@ -297,6 +308,35 @@ _CHANNEL_INDEX = {'LUMINANCE': 0, 'R': 1, 'G': 2, 'B': 3, 'ALPHA': 4}
 
 
 def draw():
+    """The registered handler. Nothing may escape it.
+
+    A draw handler that raises does so on EVERY redraw: the console fills up
+    and the viewport stutters while the artist is trying to work. Worse, the
+    exception happens inside Blender's draw loop, where the GPU state we set
+    may not have been put back.
+
+    So a failure switches the overlay off and says why, once, rather than
+    failing sixty times a second. Toggling Enable clears it and tries again.
+    """
+    global _draw_failed
+
+    if _draw_failed:
+        return
+    try:
+        _draw()
+    except Exception as exc:
+        _draw_failed = True
+        set_status("Overlay stopped after an error (toggle Enable to retry): "
+                   "%s" % exc)
+        # Put the state back by hand: _draw's own finally may not have run.
+        try:
+            gpu.state.blend_set('NONE')
+            gpu.state.depth_test_set('LESS_EQUAL')
+        except Exception:
+            pass
+
+
+def _draw():
     context = bpy.context
 
     props = getattr(context.scene, "cam_overlay", None)
@@ -361,8 +401,8 @@ def draw():
         shader.uniform_float("threshold", props.threshold)
         shader.uniform_float("tint", tuple(props.tint))
         shader.uniform_int("channel", _CHANNEL_INDEX.get(props.channel, 0))
-        shader.uniform_bool("invert", props.invert)
-        shader.uniform_bool("maskMode", props.mode == 'MASK')
+        shader.uniform_int("invert", 1 if props.invert else 0)
+        shader.uniform_int("maskMode", 1 if props.mode == 'MASK' else 0)
         batch.draw(shader)
     except Exception as exc:
         # Visible, not swallowed: the panel will say what went wrong.
@@ -382,8 +422,13 @@ def handler_registered():
 
 
 def enable_handler():
-    """Add the draw handler, at most once."""
-    global _handle
+    """Add the draw handler, at most once.
+
+    Also clears a previous draw failure: toggling Enable is the retry.
+    """
+    global _handle, _draw_failed
+    _draw_failed = False
+    clear_status()
     if _handle is not None:
         return
     _handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -425,7 +470,9 @@ def sync_handler(scene=None):
 
 def shutdown():
     """Full teardown, clean enough to survive repeated addon reloads."""
+    global _draw_failed
     disable_handler()
     clear_cache()
     _drop_shader()
     clear_status()
+    _draw_failed = False

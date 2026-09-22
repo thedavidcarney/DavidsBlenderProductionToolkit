@@ -100,8 +100,7 @@ Release process:
 4. Tag a GitHub release with `vX.Y.Z` (the updater parses `tag_name` and expects exactly that format — see `core/updater.py:93`)
 5. **Attach the zip as a release binary.** Required — see below.
 6. Test in Blender: "Check for Updates" → "Download Update" → restart
-7. **Recreate the dev junction afterwards** (command below). The update install replaces it with a real folder, and nothing puts it back — so the next code change lands in the repo and silently never reaches Blender. This has already happened once: after v1.0.17 the 5.2 addon folder was a real directory, and a whole new tool appeared to be missing because Blender was still loading the released copy. If a change seems not to take effect, **check this first**:
-   `(Get-Item "$env:APPDATA\Blender Foundation\Blender\5.2\scripts\addons\lightgroup_tools" -Force).LinkType` should print `Junction`.
+7. Leave David on the released build — `.\dev_install.ps1 prod` — so he is running what the team is running. Only switch to `dev` for the length of a test session. See the dev-install section below; forgetting this in either direction has already cost a round trip.
 
 **Don't autonomously bump versions or build release zips after a code change.** Wait for David to explicitly say it's time to release ("bump and publish", "let's ship it", etc.). Multiple changes may land in the same release; some changes are exploratory and shouldn't ship at all. After a code change, just make the change and stop — don't proactively bump `bl_info["version"]` or rebuild the zip.
 
@@ -111,13 +110,22 @@ Release process:
 
 **When David does call for a release, still provide the release message ready to copy-paste.** He cuts the release in the GitHub web UI, so he needs that one string: **one short line** listing the additions. Nobody reads the release notes — don't write prose, don't write sections, don't explain the why. Same terse register as the commit message, just enumerating what's new.
 
-**Dev install: the Blender 5.2 addon folder is a JUNCTION to this repo**, so edits go live on a Blender restart with no zip and no release. Recreate it (PowerShell) with:
+**Dev install: use `dev_install.ps1`, and PROD is the default state.**
 
 ```bash
-$dest = "$env:APPDATA\Blender Foundation\Blender\5.2\scripts\addons\lightgroup_tools"; if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Junction -Path $dest -Target "C:\Users\User\Documents\GitHub\DavidsBlenderProductionToolkit\lightgroup_tools"
+.\dev_install.ps1 status    # which one am I on?
+.\dev_install.ps1 dev       # junction -> repo working tree
+.\dev_install.ps1 prod      # reinstall the newest release zip
 ```
 
-Two consequences worth remembering. David's production Lightgroups tab now tracks the repo working tree, so **keep `main` runnable**. And before cutting a release the junction has to be replaced with a real installed copy — the updater overwrites the addon directory, and pointing that at the repo would have it writing into the git working tree.
+**David is a working artist first.** He wants to be running the same build as his team, and only dips into development for short sessions. So `prod` — a real installed copy of the newest `lightgroup_tools_v*.zip`, exactly what the team has — is where his machine should normally sit. `dev` is for the duration of a test, then straight back. Don't leave him on `dev`: it points his production Lightgroups tab at the working tree, so a half-finished commit on `main` becomes a broken tool in the middle of a job. (Keeping `main` runnable still matters, but it is no longer the only thing standing between a bad commit and his paid work.)
+
+The swap is easy to forget in **both** directions, so when a change appears to have no effect, check `status` first:
+
+- An update install replaces the junction with a real folder and nothing puts it back. After v1.0.17 this stranded a whole new tool — Blender was still loading the released copy and the Camera Overlay tab simply never appeared, with nothing wrong in the code.
+- Before cutting a release the junction *must* be gone, because the updater overwrites the addon directory and would write release contents into the git working tree. (`install_update_on_load` refuses when it sees a `.git` beside the resolved addon dir, but don't lean on that.)
+
+`dev_install.ps1` deletes a junction with `Directory.Delete` rather than `Remove-Item -Recurse`, which has a history of following the link and eating the TARGET — here, the repo. The dev↔prod round trip is sandbox-tested to leave the working tree untouched.
 
 No CI. Blender addons are ultimately tested by loading them in Blender — but `tests/run_registration_test.sh` runs a headless registration/reload regression check against any installed Blender version, and should be green before any release.
 
@@ -421,6 +429,36 @@ A test toggles 20 times and asserts no leak, per the spec's acceptance list.
 
 **Colour space:** the image's own setting is used as-is; nothing mutates the
 user's datablock. Noted in the Support sub-panel.
+
+**A failing building tool must not sink Lightgroups.** Blender aborts
+`addon_enable` on the first exception out of `register()`, and the observed
+result is not a clean failure: the addon is left marked **DISABLED while its
+classes stay registered**, so Lightgroups half-works for that session and is
+gone entirely after the next restart, preferences orphaned. `__init__.py`
+therefore runs `festoon.register()` and `camera_overlay.register()` through a
+`_guarded()` wrapper that prints the full traceback and carries on.
+`core/` and `lightgroups/` are deliberately NOT guarded — if those fail the
+addon really is broken. Phase 6 of the registration suite breaks each building
+tool in turn and asserts the denoise operator and Lightgroups panel are still
+there. This matters because David is an artist on a deadline: a GPU quirk in a
+convenience tool must never cost him his lightpass workflow.
+
+**Nothing escapes the draw handler.** A handler that raises does so on *every*
+redraw — console spam, a stuttering viewport, and GPU state possibly left as we
+set it. `draw()` is a guard around `_draw()`: on failure it sets the status,
+restores blend/depth by hand (the inner `finally` may not have run), and goes
+**quiet** rather than failing sixty times a second. Toggling Enable is the
+retry. Tested by making `_draw` raise and asserting nothing propagates.
+
+**Platform coverage.** OpenGL and Vulkan are both verified green by the pixel
+suite on David's own hardware profile (NVIDIA/Vulkan is what he runs). **Metal
+is untested — there is no Mac here.** That is why `maskMode` and `invert` are
+`INT` push constants rather than `BOOL`: a bool inside a push-constant block
+has ambiguous size (1 byte or 4), Metal emulates push constants differently
+again, and `uniform_int` has none of `uniform_bool`'s scalar-vs-sequence arity
+history. Same behaviour, one less untestable assumption. If a Mac user reports
+trouble, the Diagnostics button reports the backend and the guards above mean
+the worst case is a missing overlay, not a broken addon.
 
 Deliberately NOT built, per the spec: line guides of any kind, presets,
 per-camera syncing, aspect masking, focal points, z-depth. There is no

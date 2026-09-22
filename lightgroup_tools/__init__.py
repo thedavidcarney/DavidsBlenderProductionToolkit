@@ -78,6 +78,36 @@ classes = (core.classes + lightgroups.classes + festoon.classes
            + camera_overlay.classes)
 
 
+def _guarded(action, tool_name, func):
+    """Run a building tool's setup so a failure cannot take the addon down.
+
+    Blender aborts addon_enable on the first exception out of register().
+    Verified consequence: the addon is left marked DISABLED while its classes
+    stay registered -- so Lightgroups half-works for the rest of the session
+    and is simply gone after the next restart, preferences orphaned.
+
+    Lightgroups is the tool this team uses on every job; Festoon and Camera
+    Overlay are building aids that touch the GPU and the depsgraph, which is
+    where driver- and platform-specific failures live. A broken building tool
+    must not cost anyone their lightpass workflow mid-job, so those two are
+    isolated. core/ and lightgroups/ are deliberately NOT guarded: if they
+    fail, the addon really is broken and should say so loudly.
+
+    The failure is printed in full, never swallowed -- a silent degradation
+    would be its own bug.
+    """
+    try:
+        func()
+        return True
+    except Exception:
+        import traceback
+
+        print("[lightgroup_tools] %s failed to %s -- it will be unavailable, "
+              "but the rest of the toolkit is unaffected:" % (tool_name, action))
+        traceback.print_exc()
+        return False
+
+
 def register():
     core.updater.register_handlers()
     for cls in classes:
@@ -85,13 +115,16 @@ def register():
     # After the classes: these register scene PointerProperties that
     # reference their own PropertyGroups, which have to be registered types
     # by the time the pointer is created.
-    festoon.register()
-    camera_overlay.register()
+    _guarded("register", "Festoon Clicker", festoon.register)
+    _guarded("register", "Camera Overlay", camera_overlay.register)
 
 
 def unregister():
-    camera_overlay.unregister()
-    festoon.unregister()
+    # Guarded for the same reason, and because a tool whose register() failed
+    # part way may well fail to tear down cleanly too. Leaking one tool's
+    # handler must not stop the classes below from unregistering.
+    _guarded("unregister", "Camera Overlay", camera_overlay.unregister)
+    _guarded("unregister", "Festoon Clicker", festoon.unregister)
     for cls in classes:
         bpy.utils.unregister_class(cls)
     core.updater.unregister_handlers()

@@ -24,6 +24,8 @@ so this test drives the paths that produce it:
   5. import hygiene    -- static scan for relative imports hidden inside
                           function bodies, which move silently and only fail
                           when a user clicks the button that runs them
+  6. isolation         -- a building tool that fails to register must not
+                          take Lightgroups down with it
 
 After phases 1-3, every class, operator, panel and preference property that
 shipped in the production-tested v1.0.15 build must still resolve.
@@ -450,6 +452,72 @@ except Exception as exc:  # noqa: BLE001
     FAILURES.append("[import hygiene] raised " + type(exc).__name__ + ": " + str(exc))
 
 
+# --- Phase 6: a broken building tool must not sink the workhorse ------------
+#
+# Blender aborts addon_enable on the first exception out of register(). When
+# camera_overlay.register() raised during development, the result was NOT a
+# clean failure: the addon was left marked DISABLED while its classes stayed
+# registered -- so Lightgroups half-worked for that session and would have
+# been gone entirely after the next restart, preferences orphaned.
+#
+# Lightgroups is used on every job. Festoon and Camera Overlay are building
+# aids that touch the GPU and the depsgraph, where platform- and
+# driver-specific failures live. So those two are isolated, and this asserts
+# the isolation actually holds rather than trusting the try/except by eye.
+
+print("=== phase 6: a failing building tool must not break Lightgroups ===")
+
+try:
+    bpy.ops.preferences.addon_disable(module=ADDON)
+    for name in [n for n in sys.modules
+                 if n == ADDON or n.startswith(ADDON + ".")]:
+        del sys.modules[name]
+
+    import importlib
+
+    package = importlib.import_module(ADDON)
+
+    # Break each building tool in turn, the way a driver fault would.
+    for tool_name in ("camera_overlay", "festoon"):
+        tool = getattr(package, tool_name)
+        original = tool.register
+
+        def _explode():
+            raise RuntimeError("simulated %s failure" % tool_name)
+
+        tool.register = _explode
+        try:
+            package.register()
+            enabled_ok = True
+        except Exception as exc:
+            enabled_ok = False
+            FAILURES.append("[isolation] a failing " + tool_name
+                            + " aborted the whole addon's register(): "
+                            + type(exc).__name__ + ": " + str(exc))
+        finally:
+            tool.register = original
+
+        if enabled_ok:
+            # The production tool has to be fully there regardless.
+            check(hasattr(bpy.types, "LIGHTGROUP_OT_denoise_all_cycles"),
+                  "[isolation] denoise operator missing after a "
+                  + tool_name + " failure")
+            check(hasattr(bpy.types, "LIGHTGROUP_PT_main_panel"),
+                  "[isolation] Lightgroups panel missing after a "
+                  + tool_name + " failure")
+            try:
+                bpy.ops.lightgroup.denoise_all_cycles.get_rna_type()
+            except Exception:
+                FAILURES.append("[isolation] lightgroup.denoise_all_cycles is"
+                                " unreachable after a " + tool_name
+                                + " failure")
+            package.unregister()
+
+    print("    Lightgroups survives a failure in either building tool")
+except Exception as exc:  # noqa: BLE001
+    FAILURES.append("[isolation] raised " + type(exc).__name__ + ": " + str(exc))
+
+
 _VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
@@ -464,5 +532,5 @@ if FAILURES:
 print("REGISTRATION TEST: PASSED")
 print("  " + str(len(EXPECTED_CLASSES)) + " classes, "
       + str(len(EXPECTED_OPERATORS)) + " operators, "
-      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 5 phases")
+      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 6 phases")
 print("=" * 60)

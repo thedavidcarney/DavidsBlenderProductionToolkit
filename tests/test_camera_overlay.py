@@ -262,13 +262,57 @@ check(overlay.get_status() == "something went wrong",
       "[status] set_status should be readable by the panel")
 overlay.clear_status()
 
-# Nothing may swallow a failure silently: every early return in draw() has to
-# leave a message behind. Cheap proxy -- count the bail-outs and the setters.
-with open(os.path.join(source_root, "overlay.py"), "r", encoding="utf-8") as fh:
-    overlay_source = fh.read()
-check("except Exception" in overlay_source
-      and "pass\n" not in overlay_source.split("def draw(")[1],
-      "[status] draw() must not swallow an exception with a bare pass")
+# "Nothing may swallow a failure silently" was once checked by scanning the
+# source for a bare `pass` after `def draw(`. That was both brittle and wrong:
+# the draw guard legitimately contains one, restoring GPU state best-effort on
+# the error path, where a second exception would be worse than useless.
+# Phase 4b replaces it by actually making draw() fail and asserting a status
+# comes back -- the behaviour itself rather than a proxy for it.
+
+
+# --- Phase 4b: the draw handler must never raise ----------------------------
+
+print("=== phase 4b: draw handler containment ===")
+
+# A draw handler that throws does so on EVERY redraw: console spam, a
+# stuttering viewport, and GPU state possibly left as we set it. Whatever goes
+# wrong inside, nothing may escape into Blender's draw loop.
+original_inner = overlay._draw
+
+
+def _exploding_draw():
+    raise RuntimeError("simulated driver fault")
+
+
+overlay._draw = _exploding_draw
+overlay.enable_handler()  # clears any previous failure state
+try:
+    overlay.draw()
+    raised = None
+except Exception as exc:
+    raised = exc
+
+check(raised is None,
+      "[draw guard] an exception escaped the draw handler: " + repr(raised))
+check(overlay.get_status() != "",
+      "[draw guard] a draw failure must leave a status for the panel")
+check("simulated driver fault" in overlay.get_status(),
+      "[draw guard] the status should name the underlying error, got: "
+      + overlay.get_status())
+
+# ...and it must go quiet rather than failing sixty times a second.
+status_after_first = overlay.get_status()
+for _ in range(5):
+    overlay.draw()
+check(overlay.get_status() == status_after_first,
+      "[draw guard] repeated draws should stay quiet after the first failure")
+
+# Toggling Enable is the retry, and must clear the failure.
+overlay._draw = original_inner
+overlay.enable_handler()
+check(overlay.get_status() == "",
+      "[draw guard] re-enabling should clear the failure state")
+overlay.disable_handler()
 
 
 # --- Phase 5: the diagnostics operator --------------------------------------
@@ -370,8 +414,8 @@ else:
                         shader.uniform_float("threshold", threshold)
                         shader.uniform_float("tint", tint)
                         shader.uniform_int("channel", channel)
-                        shader.uniform_bool("invert", invert)
-                        shader.uniform_bool("maskMode", mode_is_mask)
+                        shader.uniform_int("invert", 1 if invert else 0)
+                        shader.uniform_int("maskMode", 1 if mode_is_mask else 0)
                         batch.draw(shader)
                         gpu.state.blend_set('NONE')
                     buffer = fb.read_color(8, 8, 1, 1, 4, 0, 'FLOAT')
