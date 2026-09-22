@@ -381,12 +381,10 @@ RGBA image is ~33M Python floats; 8K raises `MemoryError`, which a broad
 shader. Enforced by an **AST walk** in the test suite, not a grep — the source
 comments explaining the rule would trip a substring match.
 
-**Every bail-out sets a status string the panel renders in red**, and there is
-a Diagnostics button that dumps Blender version/hash, GPU backend/vendor/device,
-image name/size/colorspace/dirty/packed, whether the handler is registered and
-the current status — one click, one paste. The original has three early returns
-that produce no output at all, which is the entire reason its bug was
-unreportable.
+**Every bail-out sets a status string the panel renders in red.** The original
+has three early returns that produce no output at all, which is the entire
+reason its bug was unreportable. Diagnostics themselves now live in
+`core/diagnostics.py` and cover the whole toolkit — see below.
 
 **GPU state is saved and restored, not reset to assumed defaults.** The
 original hardcodes the restore to `NONE`/`LESS` whatever the state was on
@@ -429,6 +427,36 @@ A test toggles 20 times and asserts no leak, per the spec's acceptance list.
 
 **Colour space:** the image's own setting is used as-is; nothing mutates the
 user's datablock. Noted in the Support sub-panel.
+
+**Diagnostics: `core/diagnostics.py`, toolkit-wide.** One button
+(`lightgroup.write_diagnostics`, on the Lightgroups tab and the Camera Overlay
+Support sub-panel) writes a report and opens the folder holding it, so "it
+doesn't work" arrives with a file attached. Report covers addon version,
+Blender/build/platform, GPU backend/vendor/device, whether each tab actually
+registered, update-preference state, scene/render settings, and a section per
+tool. Tools contribute via `register_section` so core never imports them.
+
+Rules it lives by, because it runs on the team's machines mid-season:
+
+- **It never deletes, overwrites or moves anything.** Each run writes a NEW
+  timestamped file and opens with mode `'x'` so it cannot clobber. Old reports
+  stay until someone removes them -- they are a couple of KB, and "the addon
+  deleted a file on my machine" is not a trade worth making. A static AST check
+  in phase 7 fails the suite if `os.remove`/`shutil.rmtree`/etc. ever appears in
+  the diagnostics or camera-overlay code. (`core/updater.py` legitimately
+  removes its own staging/backup dirs and is exempt.)
+- **It writes only under `<config>/lightgroup_tools_diagnostics/`**, beside the
+  updater's dirs -- never near a .blend, a render, or `04_Renders/`. Phase 7
+  snapshots the sandbox and asserts exactly one new file, nothing modified,
+  nothing removed, and that the open .blend is not marked dirty.
+- **It never opens a window in background mode.** `bpy.ops.wm.path_open` still
+  asks the OS to open a file browser with no GUI running, so a headless test run
+  spawned an Explorer window per Blender version on David's desktop. Guarded on
+  `bpy.app.background`.
+- Every probe is individually guarded; a broken section says so and the rest of
+  the report still arrives. Section providers must be READ-ONLY -- camera
+  overlay reports `shader_state()`, never `get_shader()`, which would attempt a
+  compile and could create the fault it is describing.
 
 **A failing building tool must not sink Lightgroups.** Blender aborts
 `addon_enable` on the first exception out of `register()`, and the observed

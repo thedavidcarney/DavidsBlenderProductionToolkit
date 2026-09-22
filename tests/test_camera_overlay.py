@@ -326,7 +326,7 @@ print("=== phase 5: diagnostics operator ===")
 diag_image = bpy.data.images.new("diagnostics_probe", 4, 4)
 props.image = diag_image
 try:
-    result = bpy.ops.camoverlay.diagnostics()
+    result = bpy.ops.lightgroup.write_diagnostics()
     check(result == {'FINISHED'},
           "[diagnostics] operator returned " + repr(result))
 except Exception as exc:
@@ -336,7 +336,7 @@ except Exception as exc:
 # ...and again with no image at all, which takes the other branch.
 props.image = None
 try:
-    result = bpy.ops.camoverlay.diagnostics()
+    result = bpy.ops.lightgroup.write_diagnostics()
     check(result == {'FINISHED'},
           "[diagnostics] operator returned " + repr(result) + " with no image")
 except Exception as exc:

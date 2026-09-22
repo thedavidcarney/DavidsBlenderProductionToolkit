@@ -43,6 +43,7 @@ if "core" in locals():
     import importlib
 
     importlib.reload(core.tags)
+    importlib.reload(core.diagnostics)
     importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
     importlib.reload(lightgroups.panels)
@@ -55,11 +56,10 @@ if "core" in locals():
     importlib.reload(festoon.rig)
     importlib.reload(festoon.operators)
     importlib.reload(festoon.panels)
-    # camera_overlay: overlay is the leaf (it owns the GPU state); props,
-    # operators and panels all import it.
+    # camera_overlay: overlay is the leaf (it owns the GPU state); props and
+    # panels both import it.
     importlib.reload(camera_overlay.overlay)
     importlib.reload(camera_overlay.props)
-    importlib.reload(camera_overlay.operators)
     importlib.reload(camera_overlay.panels)
     importlib.reload(core)
     importlib.reload(lightgroups)

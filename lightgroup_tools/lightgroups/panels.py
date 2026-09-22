@@ -70,6 +70,15 @@ def _draw_tools(layout, context):
             restore_text = f"Restore Previous Version (v{prefs.backup_version})" if prefs.backup_version else "Restore Previous Version"
             row.operator("lightgroup.restore_backup", icon='RECOVER_LAST', text=restore_text)
 
+    layout.separator()
+
+    # Support: one click writes a report and opens the folder holding it, so
+    # "it isn't working" can arrive with something attached. Lives here rather
+    # than in a tool's own tab because it covers the whole toolkit, and this is
+    # the tab the team is already in every day.
+    layout.label(text="Support:")
+    layout.operator("lightgroup.write_diagnostics", icon='TEXT')
+
 
 class LIGHTGROUP_PT_main_panel(bpy.types.Panel):
     """Main panel for Lightgroup Tools in 3D Viewport"""

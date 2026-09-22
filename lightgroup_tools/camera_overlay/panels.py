@@ -133,7 +133,7 @@ class CAMOVERLAY_PT_support_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("camoverlay.diagnostics", icon='CONSOLE')
+        layout.operator("lightgroup.write_diagnostics", icon='TEXT')
         layout.label(text="Colours use the image's own", icon='INFO')
         layout.label(text="colour space setting")
 

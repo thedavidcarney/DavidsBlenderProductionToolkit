@@ -468,6 +468,50 @@ def sync_handler(scene=None):
     disable_handler()
 
 
+def report_section(context):
+    """Lines for the toolkit's diagnostics report.
+
+    Strictly read-only. It reports `shader_state()` rather than calling
+    `get_shader()` -- asking for the shader would attempt a compile, and a
+    failure there is sticky, so a support report could create the very fault
+    it is describing.
+    """
+    props = getattr(context.scene, "cam_overlay", None)
+    if props is None:
+        return ["  properties NOT REGISTERED -- the tool failed to load"]
+
+    lines = [
+        "  enabled:      %s" % props.enabled,
+        "  handler:      %s" % ("registered" if handler_registered()
+                                else "not registered"),
+        "  shader:       %s" % shader_state(),
+        "  draw failed:  %s" % _draw_failed,
+        "  mode:         %s" % props.mode,
+        "  fit:          %s" % props.fit,
+        "  opacity:      %.3f" % props.opacity,
+        "  status:       %s" % (_status if _status else "healthy"),
+    ]
+
+    image = props.image
+    if image is None:
+        lines.append("  image:        none selected")
+        return lines
+
+    # The filepath matters: this whole tool exists because the addon it
+    # replaces could not resolve a '//relative' path and failed silently.
+    lines.extend([
+        "  image:        %s" % image.name_full,
+        "    size:       %d x %d" % (image.size[0], image.size[1]),
+        "    colorspace: %s" % image.colorspace_settings.name,
+        "    source:     %s" % image.source,
+        "    filepath:   %s" % (image.filepath or "<none>"),
+        "    packed:     %s" % (image.packed_file is not None),
+        "    is_dirty:   %s" % image.is_dirty,
+        "    has_data:   %s" % image.has_data,
+    ])
+    return lines
+
+
 def shutdown():
     """Full teardown, clean enough to survive repeated addon reloads."""
     global _draw_failed

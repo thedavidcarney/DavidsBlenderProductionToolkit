@@ -26,6 +26,8 @@ so this test drives the paths that produce it:
                           when a user clicks the button that runs them
   6. isolation         -- a building tool that fails to register must not
                           take Lightgroups down with it
+  7. diagnostics       -- the support button writes exactly one file, inside
+                          the config dir, and never dirties the open .blend
 
 After phases 1-3, every class, operator, panel and preference property that
 shipped in the production-tested v1.0.15 build must still resolve.
@@ -65,7 +67,7 @@ EXPECTED_OPERATORS = (
     "festoon.place_strand",
     "festoon.place_spiral",
     "festoon.select_controls",
-    "camoverlay.diagnostics",
+    "lightgroup.write_diagnostics",
 )
 
 # NB: two registered classes are deliberately absent from this list because
@@ -95,7 +97,7 @@ EXPECTED_CLASSES = (
     "FESTOON_OT_select_controls",
     "FESTOON_PT_main_panel",
     "FESTOON_PT_strand_panel",
-    "CAMOVERLAY_OT_diagnostics",
+    "LIGHTGROUP_OT_write_diagnostics",
     "CAMOVERLAY_PT_main_panel",
     "CAMOVERLAY_PT_display_panel",
     "CAMOVERLAY_PT_transform_panel",
@@ -518,6 +520,158 @@ except Exception as exc:  # noqa: BLE001
     FAILURES.append("[isolation] raised " + type(exc).__name__ + ": " + str(exc))
 
 
+# --- Phase 7: the diagnostics button must not touch anyone's work ----------
+#
+# This runs on other people's machines, mid-season, while they have real jobs
+# open. The button is allowed to write exactly ONE file, under Blender's own
+# config directory, beside the updater's staging and backup dirs. It must not
+# write near a .blend, a render output, or anything else the artist owns, and
+# it must not modify the open file.
+
+print("=== phase 7: diagnostics writes only where it should ===")
+
+try:
+    config_root = os.path.realpath(bpy.utils.user_resource('CONFIG'))
+    sandbox = os.environ.get("BLENDER_USER_CONFIG")
+
+    # Refuse to run against a real config, the same way the update suite does.
+    if not sandbox:
+        FAILURES.append("[diagnostics] BLENDER_USER_CONFIG is not sandboxed --"
+                        " refusing to write a report into the real config dir")
+    else:
+        bpy.ops.preferences.addon_enable(module=ADDON)
+        silence_auto_check()
+
+        diagnostics = sys.modules.get(ADDON + ".core.diagnostics")
+        if check(diagnostics is not None,
+                 "[diagnostics] core.diagnostics not in sys.modules"):
+
+            probe = os.path.realpath(diagnostics.report_path())
+            check(probe.startswith(config_root),
+                  "[diagnostics] report path " + probe + " is OUTSIDE the "
+                  "config dir " + config_root)
+
+            # Snapshot the sandbox so we can prove exactly one file appeared.
+            def snapshot(root):
+                found = {}
+                for base, _dirs, files in os.walk(root):
+                    for name in files:
+                        full = os.path.join(base, name)
+                        try:
+                            found[full] = os.path.getmtime(full)
+                        except OSError:
+                            pass
+                return found
+
+            sandbox_root = os.path.realpath(os.path.join(sandbox, ".."))
+            before = snapshot(sandbox_root)
+            blend_dirty_before = bpy.data.is_dirty
+            scene_name_before = bpy.context.scene.name
+
+            result = bpy.ops.lightgroup.write_diagnostics()
+            check(result == {'FINISHED'},
+                  "[diagnostics] operator returned " + repr(result))
+
+            after = snapshot(sandbox_root)
+            created = sorted(set(after) - set(before))
+            changed = sorted(p for p in set(after) & set(before)
+                             if after[p] != before[p])
+            removed = sorted(set(before) - set(after))
+
+            # Exactly one new file, it is a report, and it sits in the
+            # config dir.
+            check(len(created) == 1,
+                  "[diagnostics] expected exactly 1 new file, got "
+                  + str(len(created)) + ": " + ", ".join(created))
+            target = os.path.realpath(created[0]) if created else None
+            if target:
+                check(target.startswith(config_root),
+                      "[diagnostics] wrote OUTSIDE the config dir: " + target)
+                check(os.path.basename(target).startswith(
+                          diagnostics.REPORT_PREFIX),
+                      "[diagnostics] unexpected filename: " + target)
+
+            # Nothing may be modified or removed. The addon must not tidy up
+            # after itself on someone's machine mid-season.
+            check(not changed,
+                  "[diagnostics] modified existing file(s): "
+                  + ", ".join(changed))
+            check(not removed,
+                  "[diagnostics] DELETED file(s): " + ", ".join(removed))
+
+            # It must not dirty the artist's open file.
+            check(bpy.data.is_dirty == blend_dirty_before,
+                  "[diagnostics] running the report marked the .blend dirty")
+            check(bpy.context.scene.name == scene_name_before,
+                  "[diagnostics] running the report renamed the scene")
+
+            # The report has to actually say something useful.
+            with open(target, "r", encoding="utf-8") as fh:
+                body = fh.read()
+            for expected in ("Lightgroup Tools", "BLENDER", "REGISTRATION",
+                             "SCENE", "end of report"):
+                check(expected in body,
+                      "[diagnostics] report is missing the '" + expected
+                      + "' section")
+            check("CAMERA OVERLAY" in body,
+                  "[diagnostics] the Camera Overlay section did not register")
+
+            # A second run must KEEP the first report. Reports are a couple of
+            # kilobytes; replacing one to save space would mean the addon
+            # deleting a file on a user's machine, which is not a trade worth
+            # making. Two runs, two files, nothing removed.
+            bpy.ops.lightgroup.write_diagnostics()
+            after_twice = snapshot(sandbox_root)
+            check(target is None or os.path.exists(target),
+                  "[diagnostics] the second run destroyed the first report")
+            still_removed = sorted(set(after) - set(after_twice))
+            check(not still_removed,
+                  "[diagnostics] a second run DELETED file(s): "
+                  + ", ".join(still_removed))
+
+            print("    one new file per run, inside the config dir, "
+                  "nothing deleted, .blend untouched")
+
+        # And statically: the diagnostics and camera overlay code must not
+        # contain a delete call at all. The updater legitimately removes its
+        # own staging and backup dirs, so it is exempt -- these are not.
+        import ast
+
+        destructive = {"remove", "unlink", "rmtree", "rmdir", "removedirs"}
+        package_dir = os.path.dirname(sys.modules[ADDON].__file__)
+        for relative in (os.path.join("core", "diagnostics.py"),
+                         os.path.join("camera_overlay", "overlay.py"),
+                         os.path.join("camera_overlay", "props.py"),
+                         os.path.join("camera_overlay", "panels.py"),
+                         os.path.join("camera_overlay", "__init__.py")):
+            full = os.path.join(package_dir, relative)
+            if not os.path.exists(full):
+                continue
+            with open(full, "r", encoding="utf-8") as fh:
+                tree = ast.parse(fh.read(), filename=relative)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = (func.attr if isinstance(func, ast.Attribute)
+                        else getattr(func, "id", None))
+                # bpy.app.handlers.load_post.remove() is a list operation, not
+                # a filesystem one -- only flag os/shutil style calls.
+                if name in destructive and isinstance(func, ast.Attribute):
+                    root = func.value
+                    root_name = (root.attr if isinstance(root, ast.Attribute)
+                                 else getattr(root, "id", ""))
+                    if root_name in ("os", "path", "shutil"):
+                        FAILURES.append(
+                            "[diagnostics] " + relative + " line "
+                            + str(node.lineno) + " calls " + root_name + "."
+                            + name + " -- this code must never delete files")
+        print("    no filesystem delete calls in the new code")
+        bpy.ops.preferences.addon_disable(module=ADDON)
+except Exception as exc:  # noqa: BLE001
+    FAILURES.append("[diagnostics] raised " + type(exc).__name__ + ": " + str(exc))
+
+
 _VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
@@ -532,5 +686,5 @@ if FAILURES:
 print("REGISTRATION TEST: PASSED")
 print("  " + str(len(EXPECTED_CLASSES)) + " classes, "
       + str(len(EXPECTED_OPERATORS)) + " operators, "
-      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 6 phases")
+      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 7 phases")
 print("=" * 60)

@@ -6,8 +6,10 @@ for matching a shot, and never appears in a render.
 Module map:
     overlay.py    shader, texture cache, draw handler, status string
     props.py      the scene PropertyGroup
-    operators.py  the diagnostics button
     panels.py     sidebar UI
+
+Diagnostics live in core/ and cover the whole toolkit; this package just
+contributes its own section to that report.
 
 `classes` is built at import time, so the addon's reload guard must reload
 these submodules BEFORE reloading this package.
@@ -17,10 +19,10 @@ import bpy
 
 from . import overlay
 from . import props
-from . import operators
 from . import panels
+from ..core import diagnostics
 
-classes = props.classes + operators.classes + panels.classes
+classes = props.classes + panels.classes
 
 
 @bpy.app.handlers.persistent
@@ -50,6 +52,7 @@ def _deferred_sync():
 
 def register():
     props.register_properties()
+    diagnostics.register_section("Camera Overlay", overlay.report_section)
 
     if _on_load not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_on_load)
@@ -70,6 +73,7 @@ def unregister():
     if bpy.app.timers.is_registered(_deferred_sync):
         bpy.app.timers.unregister(_deferred_sync)
 
+    diagnostics.unregister_section("Camera Overlay")
     overlay.shutdown()
 
     if _on_load in bpy.app.handlers.load_post:

@@ -5,8 +5,13 @@
 #   tests/run_registration_test.sh "5.0"            # a specific version
 #
 # The addon is copied into a throwaway scripts directory and Blender is
-# pointed at it with BLENDER_USER_SCRIPTS, so your real Blender config,
-# your real installed addons, and any staged update are never touched.
+# pointed at it with BLENDER_USER_SCRIPTS, so your real installed addons and
+# any staged update are never touched.
+#
+# BLENDER_USER_CONFIG is sandboxed too. Enabling the addon can write
+# preferences, and the diagnostics report writes a file under the config dir
+# -- neither may land in the real one. The suite refuses to run the
+# diagnostics phase if it does not see itself sandboxed.
 
 set -euo pipefail
 
@@ -26,7 +31,7 @@ fi
 
 # Stage a clean copy of the addon -- no __pycache__, which would otherwise let
 # a stale .pyc mask exactly the kind of import problem this test hunts for.
-mkdir -p "$SANDBOX/addons"
+mkdir -p "$SANDBOX/addons" "$SANDBOX/config"
 cp -r "$REPO_ROOT/lightgroup_tools" "$SANDBOX/addons/"
 find "$SANDBOX/addons" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
@@ -34,7 +39,9 @@ echo "Blender:  ${BLENDER_VERSION}"
 echo "Sandbox:  $SANDBOX"
 echo
 
-BLENDER_USER_SCRIPTS="$SANDBOX" "$BLENDER_EXE" \
+BLENDER_USER_SCRIPTS="$SANDBOX" \
+  BLENDER_USER_CONFIG="$SANDBOX/config" \
+  "$BLENDER_EXE" \
   --background \
   --factory-startup \
   --python "$REPO_ROOT/tests/test_registration.py"

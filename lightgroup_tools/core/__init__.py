@@ -11,6 +11,7 @@ previous build's classes.
 """
 
 from . import tags
+from . import diagnostics
 from . import updater
 
 # Preferences first: the panels read prefs while drawing, and several operators
@@ -24,4 +25,4 @@ classes = (
     updater.LIGHTGROUP_OT_update_dialog,
     updater.LIGHTGROUP_OT_restart_dialog,
     updater.LIGHTGROUP_OT_close_dialog,
-)
+) + diagnostics.classes
