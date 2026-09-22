@@ -101,7 +101,7 @@ Release process:
 5. Tag a GitHub release with `vX.Y.Z` (the updater parses `tag_name` and expects exactly that format)
 6. **Attach the zip as a release binary.** Required — see below.
 7. Test in Blender: "Check for Updates" → "Download Update" → restart
-8. Leave David on the released build — `.\dev_install.ps1 prod` — so he is running what the team is running. Only switch to `dev` for the length of a test session. See the dev-install section below; forgetting this in either direction has already cost a round trip.
+8. Leave David on the released build — `.\dev_install.cmd prod` — so he is running what the team is running. Only switch to `dev` for the length of a test session. See the dev-install section below; forgetting this in either direction has already cost a round trip.
 
 **Don't autonomously bump versions or build release zips after a code change.** Wait for David to explicitly say it's time to release ("bump and publish", "let's ship it", etc.). Multiple changes may land in the same release; some changes are exploratory and shouldn't ship at all. After a code change, just make the change and stop — don't proactively bump `bl_info["version"]` or rebuild the zip.
 
