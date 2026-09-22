@@ -27,6 +27,59 @@ def _get_backup_dir():
     return os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_backup")
 
 
+GITHUB_USER = "thedavidcarney"
+GITHUB_REPO = "DavidsBlenderProductionToolkit"
+
+
+def parse_tag(tag):
+    """'v1.0.18' -> (1, 0, 18), or None if it isn't a clean vX.Y.Z tag."""
+    try:
+        return tuple(int(part) for part in str(tag).lstrip("v").split("."))
+    except (ValueError, AttributeError):
+        return None
+
+
+def fetch_latest_release(timeout=10):
+    """Newest release by version, INCLUDING pre-releases.
+
+    Deliberately NOT the /releases/latest endpoint. GitHub excludes
+    pre-releases and drafts from that one, so a release marked "Set as a
+    pre-release" is invisible to it -- the updater would report "you have the
+    latest version" and the team would simply never be offered the build they
+    were asked to test. That happened with v1.0.18.
+
+    Hiding a release is the wrong response to "this is experimental"; the
+    right one is to offer it WITH the warning the popup draws. So we list
+    releases and pick the highest version ourselves.
+
+    Drafts are skipped -- they are not published and have no usable zipball.
+    Tags that are not clean vX.Y.Z are skipped rather than fatal, so one bad
+    tag in the history cannot break everyone's update check.
+
+    Returns the release dict, or None.
+    """
+    url = ("https://api.github.com/repos/%s/%s/releases?per_page=30"
+           % (GITHUB_USER, GITHUB_REPO))
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        releases = json.loads(response.read().decode())
+
+    if not isinstance(releases, list):
+        return None
+
+    best = None
+    best_version = None
+    for release in releases:
+        if release.get("draft"):
+            continue
+        version = parse_tag(release.get("tag_name"))
+        if version is None:
+            continue
+        if best_version is None or version > best_version:
+            best = release
+            best_version = version
+    return best
+
+
 # How much of a release body the UI will show. Deliberately tiny: this is a
 # nudge telling an artist what they are about to install, not a changelog.
 # Anything longer gets an ellipsis -- the full notes are on the GitHub release
@@ -143,19 +196,20 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
         prefs = context.preferences.addons[addon_name].preferences
         
         try:
-            # Check GitHub API for latest release
-            url = f"https://api.github.com/repos/{github_user}/{github_repo}/releases/latest"
-            print(f"Fetching: {url}")
-            
-            with urllib.request.urlopen(url, timeout=10) as response:
-                data = json.loads(response.read().decode())
-            
+            # Lists releases and picks the newest, so PRE-RELEASES are seen
+            # too -- /releases/latest hides them. See fetch_latest_release.
+            data = fetch_latest_release()
+            if data is None:
+                msg = "No usable release found on GitHub (tags must be vX.Y.Z)."
+                print(f"ERROR: {msg}")
+                self.report({'ERROR'}, msg)
+                return {'CANCELLED'}
+
             print(f"Response received, tag: {data.get('tag_name', 'NOT FOUND')}")
-                
-            latest_version_str = data["tag_name"].lstrip("v")
-            try:
-                latest_version = tuple(map(int, latest_version_str.split(".")))
-            except ValueError:
+
+            latest_version_str = str(data["tag_name"]).lstrip("v")
+            latest_version = parse_tag(data["tag_name"])
+            if latest_version is None:
                 msg = f"Couldn't parse release tag '{data['tag_name']}' as a version. Tags must be vX.Y.Z (digits only)."
                 print(f"ERROR: {msg}")
                 self.report({'ERROR'}, msg)
@@ -572,16 +626,14 @@ def _perform_check_in_thread():
     main-thread callback to apply the result (Blender's API isn't thread-safe).
     """
     try:
-        github_user = "thedavidcarney"
-        github_repo = "DavidsBlenderProductionToolkit"
-        url = f"https://api.github.com/repos/{github_user}/{github_repo}/releases/latest"
-        with urllib.request.urlopen(url, timeout=10) as response:
-            data = json.loads(response.read().decode())
+        data = fetch_latest_release()
+        if data is None:
+            print("Lightgroup Tools: auto-check found no usable release")
+            return
 
-        latest_version_str = data["tag_name"].lstrip("v")
-        try:
-            latest_version = tuple(map(int, latest_version_str.split(".")))
-        except ValueError:
+        latest_version_str = str(data["tag_name"]).lstrip("v")
+        latest_version = parse_tag(data["tag_name"])
+        if latest_version is None:
             print(f"Lightgroup Tools: auto-check ignored malformed tag '{data['tag_name']}'")
             return
 
