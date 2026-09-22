@@ -28,6 +28,9 @@ so this test drives the paths that produce it:
                           take Lightgroups down with it
   7. diagnostics       -- the support button writes exactly one file, inside
                           the config dir, and never dirties the open .blend
+  8. panel draw        -- the Lightgroups tab draws in every update state,
+                          including the one that only exists after a release
+                          is published
 
 After phases 1-3, every class, operator, panel and preference property that
 shipped in the production-tested v1.0.15 build must still resolve.
@@ -674,6 +677,124 @@ except Exception as exc:  # noqa: BLE001
     FAILURES.append("[diagnostics] raised " + type(exc).__name__ + ": " + str(exc))
 
 
+# --- Phase 8: the Lightgroups tab must draw in every update state ---------
+#
+# This is the tab the team uses on every job, and its draw path branches on
+# preference state that is FALSE on every machine right now. The
+# `update_available` branch only comes alive the moment a release is
+# published -- so a mistake in it would be invisible in testing and would
+# break everyone's panel simultaneously, mid-season, the instant they check
+# for updates. Drive every branch deliberately.
+
+print("=== phase 8: Lightgroups panel draws in every update state ===")
+
+try:
+    bpy.ops.preferences.addon_enable(module=ADDON)
+    silence_auto_check()
+    panels = sys.modules[ADDON + ".lightgroups.panels"]
+    prefs = bpy.context.preferences.addons[ADDON].preferences
+
+    class FakeLayout:
+        """Records what the real draw code emits, without a UI."""
+
+        def __init__(self, sink):
+            self.sink = sink
+            self.alert = False
+            self.enabled = True
+            self.scale_y = 1.0
+
+        def label(self, text="", icon=''):
+            self.sink.append(("label", text))
+
+        def operator(self, idname, **kwargs):
+            self.sink.append(("operator", idname))
+            return self
+
+        def box(self):
+            return FakeLayout(self.sink)
+
+        def column(self, align=False):
+            return FakeLayout(self.sink)
+
+        def row(self, align=False):
+            return FakeLayout(self.sink)
+
+        def separator(self):
+            pass
+
+        def prop(self, *args, **kwargs):
+            self.sink.append(("prop", args[1] if len(args) > 1 else "?"))
+
+    # Every button the team relies on, in every state below.
+    ESSENTIAL = ("lightgroup.clear_all_lightgroups",
+                 "lightgroup.create_for_each_light",
+                 "lightgroup.assign_to_lightgroup",
+                 "lightgroup.denoise_all_cycles",
+                 "lightgroup.check_updates")
+
+    STATES = (
+        ("clean install", dict(update_available=False, update_downloaded=False,
+                               backup_available=False,
+                               update_just_installed=False)),
+        # What every machine looks like the moment we publish.
+        ("update available", dict(update_available=True, latest_version="1.0.18",
+                                  latest_notes="Camera Overlay tab. "
+                                               "Diagnostics button.",
+                                  latest_is_prerelease=True)),
+        ("update available, stable", dict(update_available=True,
+                                          latest_is_prerelease=False)),
+        ("update available, empty notes", dict(update_available=True,
+                                               latest_notes="")),
+        ("downloaded, awaiting restart", dict(update_available=False,
+                                              update_downloaded=True)),
+        ("backup present", dict(update_downloaded=False, backup_available=True,
+                                backup_version="1.0.17")),
+        ("just installed banner", dict(update_just_installed=True,
+                                       last_installed_version="1.0.18")),
+    )
+
+    for label, state in STATES:
+        for field, value in state.items():
+            setattr(prefs, field, value)
+        sink = []
+        try:
+            panels._draw_tools(FakeLayout(sink), bpy.context)
+        except Exception as exc:
+            FAILURES.append("[panel] Lightgroups tab RAISED while drawing in "
+                            "state '" + label + "': " + type(exc).__name__
+                            + ": " + str(exc))
+            continue
+
+        drawn = [name for kind, name in sink if kind == "operator"]
+        for idname in ESSENTIAL:
+            check(idname in drawn,
+                  "[panel] '" + idname + "' missing from the Lightgroups tab "
+                  "in state '" + label + "'")
+
+        # A typo'd idname draws a red box in Blender rather than raising, so
+        # every button the panel references has to resolve for real.
+        for idname in set(drawn):
+            category, _, name = idname.partition(".")
+            try:
+                getattr(getattr(bpy.ops, category), name).get_rna_type()
+            except Exception:
+                FAILURES.append("[panel] Lightgroups tab draws a button for '"
+                                + idname + "' but that operator is not "
+                                "registered (state '" + label + "')")
+
+    # Reset so nothing leaks into a later phase or the user's prefs.
+    for field in ("update_available", "update_downloaded", "backup_available",
+                  "update_just_installed", "latest_is_prerelease"):
+        setattr(prefs, field, False)
+    for field in ("latest_version", "latest_notes", "backup_version",
+                  "last_installed_version"):
+        setattr(prefs, field, "")
+
+    print("    drew cleanly in " + str(len(STATES)) + " update states")
+except Exception as exc:  # noqa: BLE001
+    FAILURES.append("[panel] raised " + type(exc).__name__ + ": " + str(exc))
+
+
 _VERDICT_REACHED.append(True)
 # --- Result -----------------------------------------------------------------
 
@@ -688,5 +809,5 @@ if FAILURES:
 print("REGISTRATION TEST: PASSED")
 print("  " + str(len(EXPECTED_CLASSES)) + " classes, "
       + str(len(EXPECTED_OPERATORS)) + " operators, "
-      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 7 phases")
+      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 8 phases")
 print("=" * 60)
