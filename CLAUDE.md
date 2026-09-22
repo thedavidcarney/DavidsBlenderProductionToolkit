@@ -125,13 +125,15 @@ It renders the candidate note through the REAL `draw_release_info()` in a sandbo
 
 **That line is now load-bearing.** It used to be true that nobody read the release notes; since the update popup renders the release `body` as "What's new", it is the only thing the team sees before deciding whether to install. So: still one short line, still no prose or sections — but it must actually name what changed in terms an artist recognises ("Camera Overlay: reference image over the camera frame"), not an internal shorthand. Keep it under ~46 characters per line or the UI wraps it by hand.
 
-**Dev install: use `dev_install.ps1`, and PROD is the default state.**
+**Dev install: use `dev_install.cmd`, and PROD is the default state.**
 
 ```bash
-.\dev_install.ps1 status    # which one am I on?
-.\dev_install.ps1 dev       # junction -> repo working tree
-.\dev_install.ps1 prod      # reinstall the newest release zip
+.\dev_install.cmd status    # which one am I on?
+.\dev_install.cmd dev       # junction -> repo working tree
+.\dev_install.cmd prod      # reinstall the newest release zip
 ```
+
+**Always tell David the `.cmd`, never the `.ps1`.** Windows blocks `.ps1` files by default — "running scripts is disabled on this system" — and he hit exactly that. The `.cmd` wrapper is not subject to the execution policy and passes `-ExecutionPolicy Bypass` for that one process, so **nothing on his machine is changed**. Do not suggest `Set-ExecutionPolicy`: weakening a machine-wide security setting to run one dev helper is not a trade worth making.
 
 **David is a working artist first.** He wants to be running the same build as his team, and only dips into development for short sessions. So `prod` — a real installed copy of the newest `lightgroup_tools_v*.zip`, exactly what the team has — is where his machine should normally sit. `dev` is for the duration of a test, then straight back. Don't leave him on `dev`: it points his production Lightgroups tab at the working tree, so a half-finished commit on `main` becomes a broken tool in the middle of a job. (Keeping `main` runnable still matters, but it is no longer the only thing standing between a bad commit and his paid work.)
 
