@@ -8,6 +8,7 @@ import os
 import shutil
 import threading
 import datetime
+import textwrap
 from pathlib import Path
 
 
@@ -26,10 +27,12 @@ def _get_backup_dir():
     return os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_backup")
 
 
-# How much of a release body the UI will show. David's notes are one short
-# line by convention; these caps exist so a future long body cannot stretch
-# the popup or push the buttons off screen.
-MAX_NOTE_LINES = 6
+# How much of a release body the UI will show. Deliberately tiny: this is a
+# nudge telling an artist what they are about to install, not a changelog.
+# Anything longer gets an ellipsis -- the full notes are on the GitHub release
+# page for whoever wants them. A multi-line body is collapsed into one flowing
+# summary first, so bullets do not eat the whole budget.
+MAX_NOTE_LINES = 3
 NOTE_LINE_WIDTH = 46
 
 
@@ -89,22 +92,26 @@ def draw_release_info(layout, prefs, show_heading=True):
     if not notes:
         return
 
+    # Collapse the body to a single summary line, stripping markdown bullets
+    # and headers, then word-wrap it. textwrap handles the truncation, so a
+    # long note ends in an ellipsis instead of being chopped mid-word.
+    # Markdown headers are dropped outright rather than flattened in -- a body
+    # starting "## What's new" would otherwise echo the heading above it.
+    summary = " ".join(
+        stripped for stripped in
+        (line.strip().lstrip("-*> ").strip() for line in notes.splitlines()
+         if not line.strip().startswith("#"))
+        if stripped)
+    if not summary:
+        return
+
     if show_heading:
         layout.label(text="What's new:")
 
     column = layout.column(align=True)
-    shown = 0
-    for raw_line in notes.splitlines():
-        line = raw_line.strip().lstrip("-*# ").strip()
-        if not line:
-            continue
-        if shown >= MAX_NOTE_LINES:
-            column.label(text="...")
-            break
-        while line and shown < MAX_NOTE_LINES:
-            column.label(text=line[:NOTE_LINE_WIDTH])
-            line = line[NOTE_LINE_WIDTH:]
-            shown += 1
+    for line in textwrap.wrap(summary, width=NOTE_LINE_WIDTH,
+                              max_lines=MAX_NOTE_LINES, placeholder=" ..."):
+        column.label(text=line)
 
 
 class LIGHTGROUP_OT_check_updates(bpy.types.Operator):

@@ -111,6 +111,18 @@ Release process:
 
 **When David does call for a release, still provide the release message ready to copy-paste.** He cuts the release in the GitHub web UI, so he needs that one string: **one short line** listing the additions. Same terse register as the commit message, just enumerating what's new.
 
+**Show David the rendered popup and get approval before every release.** Run:
+
+```bash
+./preview_release_note.sh --prerelease "Camera Overlay tab. Diagnostics button."
+```
+
+It renders the candidate note through the REAL `draw_release_info()` in a sandboxed Blender and prints the popup as the team will see it. Paste that in chat and wait for approval — every release, no exceptions. This is his explicit instruction.
+
+**Never put AI talk in the release body.** No "Generated with", no co-author trailers, no assistant voice, no marketing register. The release body is rendered inside Blender on his team's screens, and he does not want them spammed with it. Commit messages carry the co-author trailer; the release note must not — do not paste a commit message in as release notes without stripping it.
+
+**SUPER succinct.** His word. Aim for ONE line under ~44 characters so it does not wrap at all; two wrapped lines is the practical ceiling. The UI hard-caps at 3 lines and truncates with an ellipsis (`MAX_NOTE_LINES`), so anything longer is simply not read. Name the tool and the thing, nothing else: "Camera Overlay tab. Diagnostics button." Not a sentence about what it does, not why it matters.
+
 **That line is now load-bearing.** It used to be true that nobody read the release notes; since the update popup renders the release `body` as "What's new", it is the only thing the team sees before deciding whether to install. So: still one short line, still no prose or sections — but it must actually name what changed in terms an artist recognises ("Camera Overlay: reference image over the camera frame"), not an internal shorthand. Keep it under ~46 characters per line or the UI wraps it by hand.
 
 **Dev install: use `dev_install.ps1`, and PROD is the default state.**
