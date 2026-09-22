@@ -9,6 +9,7 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 ├── __init__.py            registration hub + reload guard. No feature code.
 ├── core/                  shared infrastructure (updater, preferences)
 │   ├── updater.py
+│   ├── diagnostics.py     toolkit-wide support report; tools add sections
 │   └── tags.py            custom-property tags shared BETWEEN tools
 ├── lightgroups/           the 'Lightgroups' sidebar tab
 │   ├── operators.py
@@ -26,7 +27,6 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 └── camera_overlay/        the 'Camera Overlay' sidebar tab
     ├── overlay.py         shader, texture cache, draw handler, status string
     ├── props.py           the scene PropertyGroup (scene.cam_overlay)
-    ├── operators.py       the diagnostics button
     └── panels.py
 ```
 
