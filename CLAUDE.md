@@ -13,16 +13,21 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 ├── lightgroups/           the 'Lightgroups' sidebar tab
 │   ├── operators.py
 │   └── panels.py
-└── festoon/               the 'Festoon Clicker' sidebar tab
-    ├── picking.py         visibility-aware viewport raycasting
-    ├── shape.py           chord-frame maths + the sag shape function
-    ├── overlay.py         viewport preview drawn during placement
-    ├── nodes.py           builds the Festoon Strand node group
-    ├── rig.py             strand mesh, empties, collections
-    ├── operators.py       modal placement
-    ├── panels.py
-    └── assets/
-        └── marquee_bulb.blend   bundled default bulb (a collection)
+├── festoon/               the 'Festoon Clicker' sidebar tab
+│   ├── picking.py         visibility-aware viewport raycasting
+│   ├── shape.py           chord-frame maths + the sag shape function
+│   ├── overlay.py         viewport preview drawn during placement
+│   ├── nodes.py           builds the Festoon Strand node group
+│   ├── rig.py             strand mesh, empties, collections
+│   ├── operators.py       modal placement
+│   ├── panels.py
+│   └── assets/
+│       └── marquee_bulb.blend   bundled default bulb (a collection)
+└── camera_overlay/        the 'Camera Overlay' sidebar tab
+    ├── overlay.py         shader, texture cache, draw handler, status string
+    ├── props.py           the scene PropertyGroup (scene.cam_overlay)
+    ├── operators.py       the diagnostics button
+    └── panels.py
 ```
 
 Each subpackage owns a `classes` tuple; `__init__.py` concatenates them. A new
@@ -173,7 +178,7 @@ swag. Not length-conserving: moving an endpoint leaves the sag where you put it.
 
 The preview calls `shape.curve_points()` — a second implementation of the maths the node group runs. To stop the two drifting, `FLATNESS_TO_EXPONENT` and friends live in `shape.py` and `nodes.py` imports them, and a test pins the preview curve to the generated geometry to within vertex-sampling precision (0.022m measured against a 0.0218m sampling floor). A preview that quietly disagrees with the result is worse than no preview.
 
-Drawing is best-effort: any GPU error disables the overlay and lets placement continue rather than taking the operator down mid-strand. GPU shaders can't be exercised headlessly (no GL context in background mode), so the drawing itself is verified by eye — the geometry it *would* draw is what's under test.
+Drawing is best-effort: any GPU error disables the overlay and lets placement continue rather than taking the operator down mid-strand. The drawing itself is verified by eye — the geometry it *would* draw is what's under test. (That was once a hard limit: no GL context in background mode. **It no longer is on 5.2** — `gpu.init()` brings up a real offscreen OpenGL backend headlessly, which is how the Camera Overlay suite compiles its shader and checks actual pixels. Festoon's overlay could be tested the same way if it ever misbehaves; nobody has needed to.)
 
 **Cable types** are `Cable Strands` (1-6) plus `Cable Twist` (turns per metre).
 1 is a plain cable, 2-3 reads as twisted christmas-light flex, 4+ as braided.
@@ -329,6 +334,97 @@ Tags live in `core/tags.py`, not in `festoon/`, because `lightgroups/` is what
 reads them and importing festoon from lightgroups would couple two tools that
 are otherwise independent.
 
+## Camera Overlay
+
+A reference image drawn over the camera frame in the viewport. Own sidebar
+tab. Built from `SPEC_camera_image_overlay.md`, which exists because a
+commercial addon (Camera Guides Pro) does this and **fails silently on some
+machines** — guide lines draw, the image never appears, nothing in the
+console. The design makes each of its root causes structurally impossible
+rather than merely fixed.
+
+**What David actually uses: load an image, Normal mode, opacity slider.** Mask
+mode and the transform controls are built and tested, but they live in
+sub-panels that start collapsed so the main panel is just the picker and the
+opacity slider. Don't promote them without asking.
+
+**Viewport only, and camera view only.** A `POST_PIXEL` draw handler never
+touches the render pipeline, and drawing is gated on
+`region_data.view_perspective == 'CAMERA'`. It is a working aid for matching a
+shot, not a compositing feature — the panel says so, because people expect an
+overlay to show up in the EXR and then wonder where it went.
+
+**The image is a `PointerProperty(type=bpy.types.Image)`, never a path
+string.** This is the whole design. The original stores a
+`StringProperty(subtype='FILE_PATH')`, feeds it to `os.path.exists()` and
+calls `bpy.path.abspath()` nowhere, so a Blender-relative path (`//ref/shot.png`)
+fails the check and the draw silently no-ops. An Image pointer deletes the bug
+class outright: Blender resolves relative paths, packing and reloads,
+`template_ID` gives the standard Open/unlink/pack widget for free, and there is
+no format allow-list to fall out of date. A test pins the property to
+`POINTER` — if it ever becomes a string, everything above comes back.
+
+**Nothing reads `image.pixels`.** The original runs `list(image.pixels)`
+unconditionally, before the mode branch, and Normal mode never uses it. A 4K
+RGBA image is ~33M Python floats; 8K raises `MemoryError`, which a broad
+`except` swallows into a blank frame. All per-pixel work is in the fragment
+shader. Enforced by an **AST walk** in the test suite, not a grep — the source
+comments explaining the rule would trip a substring match.
+
+**Every bail-out sets a status string the panel renders in red**, and there is
+a Diagnostics button that dumps Blender version/hash, GPU backend/vendor/device,
+image name/size/colorspace/dirty/packed, whether the handler is registered and
+the current status — one click, one paste. The original has three early returns
+that produce no output at all, which is the entire reason its bug was
+unreportable.
+
+**GPU state is saved and restored, not reset to assumed defaults.** The
+original hardcodes the restore to `NONE`/`LESS` whatever the state was on
+entry, which corrupts *other* addons' overlays. (Festoon's own `overlay.py`
+has this same habit — pre-existing, left alone, worth fixing if it ever
+misbehaves.)
+
+**One shader, both modes, `GPUShaderCreateInfo` unconditionally.** No backend
+branching: the original sniffs Metal from `platform.system()` and reads
+`prefs.system.gpu_backend`, which reports the *pending* preference and
+disagrees with reality until restart. `create_from_info` is correct on OpenGL,
+Vulkan and Metal from 4.5 on.
+
+Three places the spec had to be corrected, all verified against real Blender:
+
+- **`texture.free()` does not exist.** `GPUTexture` has no `free` method on
+  4.5, 5.0, 5.1 or 5.2 — the spec's cleanup step would raise `AttributeError`.
+  `gpu.texture.from_image` returns *Blender's own* cached texture for that
+  image (calling it twice returns the same object) and the memory is shared,
+  so invalidation is done by dropping our reference. Never remove the image
+  datablock either — that is the original's worst bug.
+- **`TRI_FAN` still works but isn't used.** It draws fine on OpenGL in 5.2, but
+  fans are unsupported by Vulkan and deprecated in Blender's GPU module, so the
+  quad is `TRIS` with a two-triangle index buffer. One extra line.
+- **`rotation` is an `ANGLE` property**, so Blender shows degrees and stores
+  radians. `quad()` takes the value straight — converting again would be a
+  silent 57x error.
+
+**`bpy.data` is restricted during `register()`.** It is a `_RestrictData` with
+no `scenes` attribute at all, so syncing the draw handler to the open file's
+`enabled` state there raises and takes the whole addon's registration down with
+it. The initial sync is deferred through a zero-interval `bpy.app.timers`
+callback; `sync_handler` also backs off on `AttributeError` so it stays safe to
+call from anywhere. The registration suite caught this.
+
+**Handler lifetime:** `enabled` owns it, `enable_handler` is idempotent, and
+the module's own `load_post` handler drops the texture cache and re-syncs
+(because `enabled` is saved in the .blend, so the file being opened decides).
+A test toggles 20 times and asserts no leak, per the spec's acceptance list.
+
+**Colour space:** the image's own setting is used as-is; nothing mutates the
+user's datablock. Noted in the Support sub-panel.
+
+Deliberately NOT built, per the spec: line guides of any kind, presets,
+per-camera syncing, aspect masking, focal points, z-depth. There is no
+`blender_manifest.toml` either — the spec asks for extension format, but this
+repo ships one `bl_info` addon through its own updater, and that wins.
+
 ## Blender 5.2 landmines
 
 Found the hard way while building Festoon Clicker. All verified by reducing to
@@ -388,18 +484,20 @@ a minimal repro; several are 5.2-only regressions.
 
 ## Tests
 
-No framework, no CI — two headless scripts, both of which sandbox Blender so they never touch the real install:
+No framework, no CI — four headless scripts, all of which sandbox Blender so they never touch the real install:
 
 ```bash
 tests/run_registration_test.sh          # add "5.0" etc. for a specific Blender
 tests/run_update_install_test.sh
 tests/run_festoon_test.sh
+tests/run_camera_overlay_test.sh
 ```
 
 - **`run_registration_test.sh`** — every class/operator/panel/pref still resolves across a cold enable, the updater's in-session reload, and an `importlib.reload` over a live addon; plus a clean-teardown check and a static scan forbidding relative imports inside function bodies. Sandboxes `BLENDER_USER_SCRIPTS` and pins the auto-check flag so it never hits the network.
 - **`run_update_install_test.sh`** — drives the actual update install across both transitions (flat → restructured, restructured → restructured), asserting the install lands at the top level, orphans get cleaned, and backups capture the whole package. Sandboxes `BLENDER_USER_CONFIG` too, because the updater derives its staging and backup dirs from the config path; it refuses to run if it doesn't see itself sandboxed.
 
-- All three scripts install an atexit guard that forces a non-zero exit unless an explicit verdict line is reached. An uncaught exception aborts the Python script but Blender still exits 0, so a crashed run would otherwise look identical to a clean one.
+- **`run_camera_overlay_test.sh`** — the only suite that tests the GPU for real. On 5.2 it calls `gpu.init()` to get a headless OpenGL context, compiles the overlay shader, draws into a `GPUOffScreen` and **reads the pixels back**: opacity 0/0.5/1.0, mask above and below threshold, invert, per-channel selection, and tint. Also checks the fit/scale/offset/rotation/flip maths against a known frame, that 20 enable/disable cycles leak no handler, and (by AST walk) that nothing reads `.pixels`. On 4.5/5.0/5.1 there is no `gpu.init`, so the GPU phases are skipped with a printed NOTE and the rest still runs — a skip is reported, never silently passed.
+- All four scripts install an atexit guard that forces a non-zero exit unless an explicit verdict line is reached. An uncaught exception aborts the Python script but Blender still exits 0, so a crashed run would otherwise look identical to a clean one.
 - `reset_scene()` in the festoon suite re-enables the addon: `read_factory_settings` resets PREFERENCES too, which disables it, and anything calling `bpy.ops.lightgroup.*` afterwards fails with "operator could not be found".
 - **`run_festoon_test.sh`** — builds real strands and inspects the evaluated geometry: the depth-peeling raycast skips hidden objects and festoon's own strands, the curve passes through the sag empty at every flatness, flatness broadens the bottom without moving the low point, bulb spacing responds, a parent move stays rigid, and each strand gets its own node group.
 

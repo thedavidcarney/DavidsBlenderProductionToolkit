@@ -63,15 +63,16 @@ EXPECTED_OPERATORS = (
     "festoon.place_strand",
     "festoon.place_spiral",
     "festoon.select_controls",
+    "camoverlay.diagnostics",
 )
 
 # NB: two registered classes are deliberately absent from this list because
 # neither appears in bpy.types under its class name:
 #   LightgroupToolsPreferences -- an AddonPreferences registers under its
 #     bl_idname (the module name) instead.
-#   FestoonSettings -- a PropertyGroup is reached through the ID property it
-#     is attached to.
-# Both are verified functionally in assert_fully_registered() instead.
+#   FestoonSettings, CameraOverlaySettings -- a PropertyGroup is reached
+#     through the ID property it is attached to.
+# All are verified functionally in assert_fully_registered() instead.
 EXPECTED_CLASSES = (
     "LIGHTGROUP_OT_clear_all_lightgroups",
     "LIGHTGROUP_OT_create_for_each_light",
@@ -92,6 +93,11 @@ EXPECTED_CLASSES = (
     "FESTOON_OT_select_controls",
     "FESTOON_PT_main_panel",
     "FESTOON_PT_strand_panel",
+    "CAMOVERLAY_OT_diagnostics",
+    "CAMOVERLAY_PT_main_panel",
+    "CAMOVERLAY_PT_display_panel",
+    "CAMOVERLAY_PT_transform_panel",
+    "CAMOVERLAY_PT_support_panel",
 )
 
 # Panel placement is part of the contract too: the restructure must NOT move
@@ -106,6 +112,11 @@ EXPECTED_PANELS = {
     # team uses on every job.
     "FESTOON_PT_main_panel": ("VIEW_3D", "Festoon Clicker"),
     "FESTOON_PT_strand_panel": ("VIEW_3D", "Festoon Clicker"),
+    # Camera Overlay is a third separate tab, for the same reason.
+    "CAMOVERLAY_PT_main_panel": ("VIEW_3D", "Camera Overlay"),
+    "CAMOVERLAY_PT_display_panel": ("VIEW_3D", "Camera Overlay"),
+    "CAMOVERLAY_PT_transform_panel": ("VIEW_3D", "Camera Overlay"),
+    "CAMOVERLAY_PT_support_panel": ("VIEW_3D", "Camera Overlay"),
 }
 
 EXPECTED_PREF_PROPS = (
@@ -262,6 +273,31 @@ def assert_fully_registered(phase):
                 check(hasattr(settings, field),
                       "[" + phase + "] festoon setting '" + field + "' missing")
 
+    # Camera Overlay's scene PointerProperty, same arrangement.
+    check(hasattr(bpy.types.Scene, "cam_overlay"),
+          "[" + phase + "] Scene.cam_overlay not registered")
+    if scene is not None:
+        overlay_settings = getattr(scene, "cam_overlay", None)
+        if check(overlay_settings is not None,
+                 "[" + phase + "] scene.cam_overlay does not resolve"):
+            check(type(overlay_settings).__name__ == "CameraOverlaySettings",
+                  "[" + phase + "] cam_overlay is a "
+                  + type(overlay_settings).__name__
+                  + ", expected CameraOverlaySettings")
+            # `image` being an Image pointer rather than a path string is the
+            # single decision the whole tool rests on, so it is worth pinning:
+            # a StringProperty here would reintroduce the entire bug class.
+            check(type(overlay_settings).bl_rna
+                  .properties["image"].type == 'POINTER',
+                  "[" + phase + "] cam_overlay.image is not a PointerProperty"
+                  " -- a path string would break relative paths and packing")
+            for field in ("enabled", "opacity", "mode", "channel", "threshold",
+                          "invert", "tint", "fit", "scale", "offset_x",
+                          "offset_y", "rotation", "flip_x", "flip_y"):
+                check(hasattr(overlay_settings, field),
+                      "[" + phase + "] cam_overlay setting '" + field
+                      + "' missing")
+
 
 # --- Phase 1: cold enable ---------------------------------------------------
 
@@ -334,6 +370,21 @@ try:
           "[teardown] addon still present in context.preferences.addons after disable")
     check(not hasattr(bpy.types.Scene, "festoon_settings"),
           "[teardown] Scene.festoon_settings leaked past unregister")
+    check(not hasattr(bpy.types.Scene, "cam_overlay"),
+          "[teardown] Scene.cam_overlay leaked past unregister")
+
+    # A leaked draw handler keeps drawing against unregistered properties,
+    # which is a crash rather than a cosmetic bug. The overlay module also
+    # owns its own load_post handler, separate from the updater's.
+    overlay_module = sys.modules.get(ADDON + ".camera_overlay.overlay")
+    if check(overlay_module is not None,
+             "[teardown] camera_overlay.overlay not found in sys.modules"):
+        check(not overlay_module.handler_registered(),
+              "[teardown] camera overlay draw handler survived addon_disable")
+    package = sys.modules.get(ADDON + ".camera_overlay")
+    if package is not None:
+        check(package._on_load not in bpy.app.handlers.load_post,
+              "[teardown] camera overlay load_post handler survived disable")
 except Exception as exc:  # noqa: BLE001
     FAILURES.append("[teardown] raised " + type(exc).__name__ + ": " + str(exc))
 

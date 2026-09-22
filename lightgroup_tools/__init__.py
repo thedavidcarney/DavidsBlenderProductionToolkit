@@ -12,9 +12,10 @@ import bpy
 
 # --- Package layout ---------------------------------------------------------
 #
-#   core/         shared infrastructure (updater, preferences)
-#   lightgroups/  the Lightgroups tab
-#   festoon/      the Festoon Clicker tab
+#   core/            shared infrastructure (updater, preferences)
+#   lightgroups/     the Lightgroups tab
+#   festoon/         the Festoon Clicker tab
+#   camera_overlay/  the Camera Overlay tab
 #
 # Each subpackage owns a `classes` tuple; this module just aggregates and
 # registers them. A new tool means a new subpackage and two lines here -- it
@@ -54,30 +55,42 @@ if "core" in locals():
     importlib.reload(festoon.rig)
     importlib.reload(festoon.operators)
     importlib.reload(festoon.panels)
+    # camera_overlay: overlay is the leaf (it owns the GPU state); props,
+    # operators and panels all import it.
+    importlib.reload(camera_overlay.overlay)
+    importlib.reload(camera_overlay.props)
+    importlib.reload(camera_overlay.operators)
+    importlib.reload(camera_overlay.panels)
     importlib.reload(core)
     importlib.reload(lightgroups)
     importlib.reload(festoon)
+    importlib.reload(camera_overlay)
 else:
     from . import core
     from . import lightgroups
     from . import festoon
+    from . import camera_overlay
 
 
 # Registration order across the toolkit. Preferences land first (via core), and
 # panels last, matching what shipped in v1.0.15.
-classes = core.classes + lightgroups.classes + festoon.classes
+classes = (core.classes + lightgroups.classes + festoon.classes
+           + camera_overlay.classes)
 
 
 def register():
     core.updater.register_handlers()
     for cls in classes:
         bpy.utils.register_class(cls)
-    # After the classes: festoon's scene PointerProperty references
-    # FestoonSettings, which has to be a registered type by then.
+    # After the classes: these register scene PointerProperties that
+    # reference their own PropertyGroups, which have to be registered types
+    # by the time the pointer is created.
     festoon.register()
+    camera_overlay.register()
 
 
 def unregister():
+    camera_overlay.unregister()
     festoon.unregister()
     for cls in classes:
         bpy.utils.unregister_class(cls)
