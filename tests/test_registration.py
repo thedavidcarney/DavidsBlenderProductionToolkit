@@ -127,6 +127,8 @@ EXPECTED_PREF_PROPS = (
     "update_available",
     "latest_version",
     "download_url",
+    "latest_notes",
+    "latest_is_prerelease",
     "update_downloaded",
     "staged_update_path",
     "staged_update_version",

@@ -7,6 +7,11 @@ buttons, same order.
 
 import bpy
 
+# Module scope, never inside a function: a relative import in a function body
+# only resolves when that code path runs, so moving this module would break
+# the update panel silently and only for whoever clicked the button.
+from ..core import updater
+
 
 def _get_prefs(context):
     """Fetch addon preferences, or None if the addon isn't registered under the expected name."""
@@ -62,6 +67,9 @@ def _draw_tools(layout, context):
         elif prefs.update_available:
             box = layout.box()
             box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
+            # Same helper the popup uses, so what's new and the experimental
+            # warning can't say different things in the two places.
+            updater.draw_release_info(box, prefs)
             box.operator("lightgroup.download_update", icon='IMPORT')
 
         # Rollback to the backup of the previous version

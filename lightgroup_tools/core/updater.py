@@ -26,6 +26,13 @@ def _get_backup_dir():
     return os.path.join(os.path.dirname(bpy.utils.user_resource('CONFIG')), "lightgroup_tools_backup")
 
 
+# How much of a release body the UI will show. David's notes are one short
+# line by convention; these caps exist so a future long body cannot stretch
+# the popup or push the buttons off screen.
+MAX_NOTE_LINES = 6
+NOTE_LINE_WIDTH = 46
+
+
 # Preferences to store update info (persists across sessions)
 class LightgroupToolsPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__.partition('.')[0]
@@ -33,6 +40,13 @@ class LightgroupToolsPreferences(bpy.types.AddonPreferences):
     update_available: bpy.props.BoolProperty(default=False)
     latest_version: bpy.props.StringProperty(default="")
     download_url: bpy.props.StringProperty(default="")
+    # What's new, straight from the GitHub release body, and whether David
+    # ticked "Set as a pre-release". Both are shown before anyone updates, so
+    # nobody installs a build blind in the middle of a season. Read with
+    # .get() everywhere -- a release with no body or an older API response
+    # must never break the check itself.
+    latest_notes: bpy.props.StringProperty(default="")
+    latest_is_prerelease: bpy.props.BoolProperty(default=False)
     update_downloaded: bpy.props.BoolProperty(default=False)
     staged_update_path: bpy.props.StringProperty(default="")
     # The version string of whatever is currently staged in staged_update_path
@@ -50,6 +64,47 @@ class LightgroupToolsPreferences(bpy.types.AddonPreferences):
     # ISO timestamp of the most recent auto-check, used to throttle to once per
     # 24 hours so we don't hammer GitHub's unauthenticated API rate limit.
     last_auto_check: bpy.props.StringProperty(default="")
+
+
+def draw_release_info(layout, prefs, show_heading=True):
+    """Draw 'what's new' and the experimental warning.
+
+    Shared by the popup and the sidebar panel so the two can't drift -- the
+    same mistake the Lightgroups 3D/compositor panels made before they were
+    given a common helper.
+
+    Blender's labels do not wrap, so the notes are split and clipped by hand.
+    David's release notes are deliberately one short line, but nothing stops a
+    future release body being long, and a popup stretched to the width of a
+    paragraph would be its own bug.
+    """
+    if prefs.latest_is_prerelease:
+        warning = layout.box()
+        warning.alert = True
+        warning.label(text="EXPERIMENTAL RELEASE", icon='ERROR')
+        warning.label(text="Not fully tested. If you are mid-job,")
+        warning.label(text="finish the job first.")
+
+    notes = (prefs.latest_notes or "").strip()
+    if not notes:
+        return
+
+    if show_heading:
+        layout.label(text="What's new:")
+
+    column = layout.column(align=True)
+    shown = 0
+    for raw_line in notes.splitlines():
+        line = raw_line.strip().lstrip("-*# ").strip()
+        if not line:
+            continue
+        if shown >= MAX_NOTE_LINES:
+            column.label(text="...")
+            break
+        while line and shown < MAX_NOTE_LINES:
+            column.label(text=line[:NOTE_LINE_WIDTH])
+            line = line[NOTE_LINE_WIDTH:]
+            shown += 1
 
 
 class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
@@ -110,6 +165,8 @@ class LIGHTGROUP_OT_check_updates(bpy.types.Operator):
                 prefs.update_available = True
                 prefs.latest_version = latest_version_str
                 prefs.download_url = data["zipball_url"]
+                prefs.latest_notes = (data.get("body") or "").strip()
+                prefs.latest_is_prerelease = bool(data.get("prerelease", False))
                 
                 # Save preferences to disk
                 bpy.ops.wm.save_userpref()
@@ -522,10 +579,13 @@ def _perform_check_in_thread():
             return
 
         zipball_url = data["zipball_url"]
+        notes = (data.get("body") or "").strip()
+        prerelease = bool(data.get("prerelease", False))
 
         # Hand back to main thread via a one-shot timer
         def apply_result():
-            _apply_check_result(latest_version_str, latest_version, zipball_url)
+            _apply_check_result(latest_version_str, latest_version, zipball_url,
+                                notes, prerelease)
             return None
 
         bpy.app.timers.register(apply_result, first_interval=0.1)
@@ -533,7 +593,8 @@ def _perform_check_in_thread():
         print(f"Lightgroup Tools: background auto-check failed: {e}")
 
 
-def _apply_check_result(latest_version_str, latest_version, zipball_url):
+def _apply_check_result(latest_version_str, latest_version, zipball_url,
+                        notes="", prerelease=False):
     """Runs on the main thread. Updates prefs and shows the dialog if newer."""
     try:
         addon_name = "lightgroup_tools"
@@ -552,6 +613,8 @@ def _apply_check_result(latest_version_str, latest_version, zipball_url):
             prefs.update_available = True
             prefs.latest_version = latest_version_str
             prefs.download_url = zipball_url
+            prefs.latest_notes = notes
+            prefs.latest_is_prerelease = prerelease
             print(f"Lightgroup Tools: auto-check found v{latest_version_str} (current: v{'.'.join(map(str, current_version))})")
             if not prefs.update_downloaded:
                 _schedule_dialog("lightgroup.update_dialog")
@@ -604,9 +667,13 @@ class LIGHTGROUP_OT_update_dialog(bpy.types.Operator):
         layout.label(text=f"Lightgroup Tools v{prefs.latest_version} is available", icon='INFO')
         layout.label(text=f"You are running v{current}")
         layout.separator()
+        draw_release_info(layout, prefs)
+        layout.separator()
         row = layout.row()
         row.operator("lightgroup.download_update", text="Update Now", icon='IMPORT')
         row.operator("lightgroup.close_dialog", text="Ignore")
+        layout.label(text="You can update later -- and roll back after.",
+                     icon='INFO')
 
     def execute(self, context):
         return {'FINISHED'}
