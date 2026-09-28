@@ -406,6 +406,26 @@ bpy.data.images.remove(missing)
 render.resolution_percentage = 100
 
 
+# --- Phase 5c: picking an image switches the overlay on ---------------------
+
+print("=== phase 5c: auto-enable ===")
+
+props.enabled = False
+props.image = None
+check(props.enabled is False, "[auto-enable] clearing an image turned it on")
+auto_image = bpy.data.images.new("auto_enable_probe", 4, 4)
+props.image = auto_image
+check(props.enabled is True, "[auto-enable] picking an image left it off")
+check(overlay.handler_registered(),
+      "[auto-enable] enabled but no draw handler registered")
+props.image = None
+check(props.enabled is True,
+      "[auto-enable] clearing the image turned the overlay off -- it must"
+      " only ever switch it on")
+props.enabled = False
+bpy.data.images.remove(auto_image)
+
+
 # --- Phase 6: the GPU path (5.2+) ------------------------------------------
 
 print("=== phase 6: shader and pixels ===")

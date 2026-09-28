@@ -385,8 +385,10 @@ It sets resolution X/Y only and leaves Resolution % alone, and refuses a 0x0
 **Viewport only, and camera view only.** A `POST_PIXEL` draw handler never
 touches the render pipeline, and drawing is gated on
 `region_data.view_perspective == 'CAMERA'`. It is a working aid for matching a
-shot, not a compositing feature — the panel says so, because people expect an
-overlay to show up in the EXR and then wonder where it went.
+shot, not a compositing feature. The panel used to carry a "Viewport only, in
+camera view" line; David had it removed (the team knows), so don't put it back.
+Picking an image switches `enabled` on (the `image` update callback); clearing
+it never switches it off.
 
 **The image is a `PointerProperty(type=bpy.types.Image)`, never a path
 string.** This is the whole design. The original stores a

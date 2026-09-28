@@ -6,7 +6,9 @@ bug class -- relative paths (`//ref/shot.png`), packed images, reloads, and
 formats nobody thought to allow-list. Blender already solves all of it, and
 `template_ID` gives us the standard Open / unlink / pack widget for free.
 
-Every property's update callback is just a redraw. There is no cache
+Every property's update callback is just a redraw, apart from `enabled`
+(owns the draw handler) and `image` (picking one switches the overlay on).
+There is no cache
 invalidation logic here on purpose: the texture cache in overlay.py keys on
 the image itself, so nothing in this file can leave it stale.
 """
@@ -42,11 +44,23 @@ def _toggle(self, context):
     _redraw(self, context)
 
 
+def _image_changed(self, context):
+    """Picking an image means you want to see it, so switch the overlay on.
+
+    Only ever turns it ON: clearing the image leaves `enabled` alone. Setting
+    `enabled` runs `_toggle`, which installs the handler and redraws.
+    """
+    if self.image is not None and not self.enabled:
+        self.enabled = True
+    else:
+        _redraw(self, context)
+
+
 class CameraOverlaySettings(bpy.types.PropertyGroup):
     """Per-scene overlay state, reached as `scene.cam_overlay`."""
 
     image: bpy.props.PointerProperty(
-        name="Image", type=bpy.types.Image, update=_redraw,
+        name="Image", type=bpy.types.Image, update=_image_changed,
         description="Reference image drawn over the camera frame. "
                     "Uses the image datablock, so relative paths and packed "
                     "images resolve correctly on any machine")

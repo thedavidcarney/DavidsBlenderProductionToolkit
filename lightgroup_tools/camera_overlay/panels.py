@@ -76,10 +76,6 @@ class CAMOVERLAY_PT_main_panel(bpy.types.Panel):
             layout.label(text="Load an image to begin", icon='INFO')
         elif not props.enabled:
             layout.label(text="Overlay is off", icon='HIDE_ON')
-        else:
-            # Worth saying plainly: people expect an overlay to be a render
-            # feature, and then wonder why it is missing from the EXR.
-            layout.label(text="Viewport only, in camera view", icon='INFO')
 
         _draw_status(layout)
 
