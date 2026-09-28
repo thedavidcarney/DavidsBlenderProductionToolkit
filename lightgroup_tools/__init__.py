@@ -60,6 +60,7 @@ if "core" in locals():
     # panels both import it.
     importlib.reload(camera_overlay.overlay)
     importlib.reload(camera_overlay.props)
+    importlib.reload(camera_overlay.operators)
     importlib.reload(camera_overlay.panels)
     importlib.reload(core)
     importlib.reload(lightgroups)

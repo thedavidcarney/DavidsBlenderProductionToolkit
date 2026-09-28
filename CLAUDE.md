@@ -375,7 +375,12 @@ rather than merely fixed.
 **What David actually uses: load an image, Normal mode, opacity slider.** Mask
 mode and the transform controls are built and tested, but they live in
 sub-panels that start collapsed so the main panel is just the picker and the
-opacity slider. Don't promote them without asking.
+opacity slider. Don't promote them without asking. David has since added two
+things to the main panel by request: the active camera's passepartout (the
+camera's real setting, usable with no image) and **Match File to Image
+Resolution** (`camoverlay.match_resolution`, greyed by its poll when no image).
+It sets resolution X/Y only and leaves Resolution % alone, and refuses a 0x0
+(missing-file) image rather than writing Blender's 4x4 floor.
 
 **Viewport only, and camera view only.** A `POST_PIXEL` draw handler never
 touches the render pipeline, and drawing is gated on

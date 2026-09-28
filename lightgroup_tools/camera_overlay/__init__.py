@@ -6,6 +6,7 @@ for matching a shot, and never appears in a render.
 Module map:
     overlay.py    shader, texture cache, draw handler, status string
     props.py      the scene PropertyGroup
+    operators.py  Match File to Image Resolution
     panels.py     sidebar UI
 
 Diagnostics live in core/ and cover the whole toolkit; this package just
@@ -19,10 +20,11 @@ import bpy
 
 from . import overlay
 from . import props
+from . import operators
 from . import panels
 from ..core import diagnostics
 
-classes = props.classes + panels.classes
+classes = props.classes + operators.classes + panels.classes
 
 
 @bpy.app.handlers.persistent

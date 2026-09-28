@@ -71,6 +71,7 @@ EXPECTED_OPERATORS = (
     "festoon.place_spiral",
     "festoon.select_controls",
     "lightgroup.write_diagnostics",
+    "camoverlay.match_resolution",
 )
 
 # NB: two registered classes are deliberately absent from this list because
@@ -105,6 +106,7 @@ EXPECTED_CLASSES = (
     "CAMOVERLAY_PT_display_panel",
     "CAMOVERLAY_PT_transform_panel",
     "CAMOVERLAY_PT_support_panel",
+    "CAMOVERLAY_OT_match_resolution",
 )
 
 # Panel placement is part of the contract too: the restructure must NOT move

@@ -69,6 +69,9 @@ class CAMOVERLAY_PT_main_panel(bpy.types.Panel):
         else:
             layout.label(text="No active camera", icon='CAMERA_DATA')
 
+        # Greyed out by the operator's own poll when no image is loaded.
+        layout.operator("camoverlay.match_resolution", icon='FULLSCREEN_EXIT')
+
         if props.image is None:
             layout.label(text="Load an image to begin", icon='INFO')
         elif not props.enabled:

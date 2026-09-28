@@ -357,6 +357,55 @@ check("not built yet" in overlay.shader_state(),
       + "' after diagnostics -- the button triggered a compile")
 
 
+# --- Phase 5b: Match File to Image Resolution -------------------------------
+
+print("=== phase 5b: match resolution ===")
+
+render = scene.render
+match = bpy.ops.camoverlay.match_resolution
+
+# No image: poll must fail, which is what greys the button out.
+props.image = None
+check(not match.poll(), "[match] poll passed with no image -- button not greyed")
+
+render.resolution_x, render.resolution_y = 1920, 1080
+render.resolution_percentage = 50
+res_image = bpy.data.images.new("match_probe", 3840, 1600)
+props.image = res_image
+check(match.poll(), "[match] poll failed with an image loaded")
+result = match()
+check(result == {'FINISHED'}, "[match] operator returned " + repr(result))
+check((render.resolution_x, render.resolution_y) == (3840, 1600),
+      "[match] resolution is %dx%d, expected 3840x1600"
+      % (render.resolution_x, render.resolution_y))
+check(render.resolution_percentage == 50,
+      "[match] resolution % was changed -- it must be left alone")
+
+# An image whose file is missing reports 0x0. Writing that would give Blender's
+# 4x4 floor, so the operator must refuse and leave the resolution untouched.
+missing = bpy.data.images.new("match_missing", 4, 4)
+missing.source = 'FILE'
+missing.filepath = "//definitely_not_here_7f3a.png"
+props.image = missing
+if check(tuple(missing.size) == (0, 0),
+         "[match] test setup: missing-file image reports size "
+         + str(tuple(missing.size)) + ", expected (0, 0)"):
+    try:
+        result = match()
+    except RuntimeError:
+        result = {'CANCELLED'}  # an ERROR report surfaces as RuntimeError
+    check(result == {'CANCELLED'},
+          "[match] missing-file image returned " + repr(result))
+    check((render.resolution_x, render.resolution_y) == (3840, 1600),
+          "[match] missing-file image changed the resolution to %dx%d"
+          % (render.resolution_x, render.resolution_y))
+
+props.image = None
+bpy.data.images.remove(res_image)
+bpy.data.images.remove(missing)
+render.resolution_percentage = 100
+
+
 # --- Phase 6: the GPU path (5.2+) ------------------------------------------
 
 print("=== phase 6: shader and pixels ===")
