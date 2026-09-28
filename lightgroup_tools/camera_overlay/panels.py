@@ -55,6 +55,20 @@ class CAMOVERLAY_PT_main_panel(bpy.types.Panel):
         body.enabled = props.image is not None
         body.prop(props, "opacity", slider=True)
 
+        # The active camera's own passepartout, not a copy: editing it here is
+        # editing the camera. Outside `body` because it is useful with no
+        # image loaded.
+        camera = context.scene.camera
+        if camera is not None and camera.type == 'CAMERA':
+            row = layout.row(align=True)
+            row.prop(camera.data, "show_passepartout", text="")
+            sub = row.row(align=True)
+            sub.active = camera.data.show_passepartout
+            sub.prop(camera.data, "passepartout_alpha", text="Passepartout",
+                     slider=True)
+        else:
+            layout.label(text="No active camera", icon='CAMERA_DATA')
+
         if props.image is None:
             layout.label(text="Load an image to begin", icon='INFO')
         elif not props.enabled:
