@@ -16,9 +16,9 @@
   reason.
 
 .EXAMPLE
-  .\dev_install.ps1 status
-  .\dev_install.ps1 dev      # work on the addon
-  .\dev_install.ps1 prod     # back to the team's build
+  .\dev_install.cmd status
+  .\dev_install.cmd dev      # work on the addon
+  .\dev_install.cmd prod     # back to the team's build
 #>
 
 [CmdletBinding()]
@@ -90,7 +90,7 @@ switch ($Mode) {
         New-Item -ItemType Junction -Path $dest -Target $source | Out-Null
         Write-Host "Switched to DEV." -ForegroundColor Cyan
         Write-Host "Blender now loads the repo working tree - restart Blender." -ForegroundColor Cyan
-        Write-Host "Run '.\dev_install.ps1 prod' when you go back to real work." -ForegroundColor Yellow
+        Write-Host "Run '.\dev_install.cmd prod' when you go back to real work." -ForegroundColor Yellow
         Write-Host ""
         Show-Status
     }
