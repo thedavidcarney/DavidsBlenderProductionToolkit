@@ -9,6 +9,7 @@ this package's submodules BEFORE reloading this package.
 """
 
 from . import operators
+from . import solo
 from . import panels
 
 classes = (
@@ -16,4 +17,12 @@ classes = (
     operators.LIGHTGROUP_OT_create_for_each_light,
     operators.LIGHTGROUP_OT_denoise_all_cycles,
     operators.LIGHTGROUP_OT_assign_to_lightgroup,
-) + panels.classes
+) + solo.classes + panels.classes
+
+
+def register_properties():
+    solo.register_properties()
+
+
+def unregister_properties():
+    solo.unregister_properties()

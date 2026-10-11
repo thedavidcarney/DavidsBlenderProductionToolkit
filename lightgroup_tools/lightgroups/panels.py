@@ -11,6 +11,7 @@ import bpy
 # only resolves when that code path runs, so moving this module would break
 # the update panel silently and only for whoever clicked the button.
 from ..core import updater
+from . import solo
 
 
 def _get_prefs(context):
@@ -35,6 +36,10 @@ def _draw_tools(layout, context):
     layout.operator("lightgroup.clear_all_lightgroups", icon='X', text="Clear All Lightgroups")
     layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
     layout.operator("lightgroup.assign_to_lightgroup", icon='LINKED', text="Add Selected to Lightgroup")
+
+    layout.separator()
+
+    solo.draw_solo(layout, context)
 
     layout.separator()
 

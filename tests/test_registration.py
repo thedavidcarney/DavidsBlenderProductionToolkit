@@ -72,6 +72,7 @@ EXPECTED_OPERATORS = (
     "festoon.select_controls",
     "lightgroup.write_diagnostics",
     "camoverlay.match_resolution",
+    "lightgroup.solo_light",
 )
 
 # NB: two registered classes are deliberately absent from this list because
@@ -107,6 +108,7 @@ EXPECTED_CLASSES = (
     "CAMOVERLAY_PT_transform_panel",
     "CAMOVERLAY_PT_support_panel",
     "CAMOVERLAY_OT_match_resolution",
+    "LIGHTGROUP_OT_solo_light",
 )
 
 # Panel placement is part of the contract too: the restructure must NOT move
@@ -284,6 +286,19 @@ def assert_fully_registered(phase):
                 check(hasattr(settings, field),
                       "[" + phase + "] festoon setting '" + field + "' missing")
 
+    # Solo Light's scene state. It lives in lightgroups/, so unlike the two
+    # building tools it is NOT behind _guarded() -- a failure here is loud.
+    check(hasattr(bpy.types.Scene, "lightgroup_solo"),
+          "[" + phase + "] Scene.lightgroup_solo not registered")
+    if scene is not None:
+        solo_settings = getattr(scene, "lightgroup_solo", None)
+        if check(solo_settings is not None,
+                 "[" + phase + "] scene.lightgroup_solo does not resolve"):
+            for field in ("active", "view_layer", "soloed", "muted", "spaces"):
+                check(hasattr(solo_settings, field),
+                      "[" + phase + "] lightgroup_solo setting '" + field
+                      + "' missing")
+
     # Camera Overlay's scene PointerProperty, same arrangement.
     check(hasattr(bpy.types.Scene, "cam_overlay"),
           "[" + phase + "] Scene.cam_overlay not registered")
@@ -383,6 +398,8 @@ try:
           "[teardown] Scene.festoon_settings leaked past unregister")
     check(not hasattr(bpy.types.Scene, "cam_overlay"),
           "[teardown] Scene.cam_overlay leaked past unregister")
+    check(not hasattr(bpy.types.Scene, "lightgroup_solo"),
+          "[teardown] Scene.lightgroup_solo leaked past unregister")
 
     # A leaked draw handler keeps drawing against unregistered properties,
     # which is a crash rather than a cosmetic bug. The overlay module also

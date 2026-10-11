@@ -46,6 +46,7 @@ if "core" in locals():
     importlib.reload(core.diagnostics)
     importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
+    importlib.reload(lightgroups.solo)
     importlib.reload(lightgroups.panels)
     # festoon's own submodules import each other, so they reload innermost
     # first: picking and shape are leaves, nodes feeds rig, rig feeds operators.
@@ -113,6 +114,7 @@ def register():
     core.updater.register_handlers()
     for cls in classes:
         bpy.utils.register_class(cls)
+    lightgroups.register_properties()
     # After the classes: these register scene PointerProperties that
     # reference their own PropertyGroups, which have to be registered types
     # by the time the pointer is created.
@@ -126,6 +128,7 @@ def unregister():
     # handler must not stop the classes below from unregistering.
     _guarded("unregister", "Camera Overlay", camera_overlay.unregister)
     _guarded("unregister", "Festoon Clicker", festoon.unregister)
+    lightgroups.unregister_properties()
     for cls in classes:
         bpy.utils.unregister_class(cls)
     core.updater.unregister_handlers()

@@ -176,6 +176,30 @@ No CI. Blender addons are ultimately tested by loading them in Blender — but `
 - This addon was iterated through several conversations before Claude Code. Some prior changes were claimed "fixed!" without verification against the live file (e.g., the black-emission detection landed for Principled BSDF but the equivalent fix for the standalone Emission shader was forgotten until now). When changing logic that has a paired/symmetric path, **verify both halves**.
 - The `bl_info["version"]` and the zip filename (`lightgroup_tools_v{maj}_{min}_{patch}.zip`) and the GitHub release tag (`vX.Y.Z`) all have to stay in sync — easy to bump one and forget another.
 
+## Solo Light
+
+`lightgroups/solo.py`, a toggle in the Lightgroups tab (3D View + Compositor;
+not the View Layer subset). On: every other LIGHT object in the view layer is
+eye-hidden and the World is switched off in every 3D viewport. Off: exactly
+what was changed is restored. State lives on `scene.lightgroup_solo`, so it
+survives save/reopen mid-solo.
+
+**Viewport only by construction, not by discipline.** The eye (`hide_set`)
+drops an object from the viewport depsgraph but F12 reads `hide_render`, which
+is never touched. The World is muted through each 3D view's shading
+(`use_scene_world_render = False`, `studiolight_intensity = 0`), never through
+the World datablock. So a file saved mid-solo still renders every light --
+the suite proves this with real Cycles renders, pixel-identical soloed vs not.
+Don't "simplify" to light energy / world Strength / ray visibility: all three
+reach the render, and energy breaks on keyframes and shared light data.
+
+Only LIGHT objects are muted (David's scope: "only selected lights"); emissive
+meshes and festoon bulbs are untouched -- hiding them hides their geometry.
+Lights already hidden are not recorded, so unsolo never unhides them. Muted
+lights are stored as Object pointers (rename-safe); viewports by screen name +
+area index, since spaces can't carry properties. A 3D view opened mid-solo
+isn't muted. Verified in a real GUI viewport render, not just headless.
+
 ## Festoon Clicker
 
 Click-to-place festoon light strings. Own sidebar tab, deliberately separate
@@ -578,20 +602,22 @@ a minimal repro; several are 5.2-only regressions.
 
 ## Tests
 
-No framework, no CI — four headless scripts, all of which sandbox Blender so they never touch the real install:
+No framework, no CI — five headless scripts, all of which sandbox Blender so they never touch the real install:
 
 ```bash
 tests/run_registration_test.sh          # add "5.0" etc. for a specific Blender
 tests/run_update_install_test.sh
 tests/run_festoon_test.sh
 tests/run_camera_overlay_test.sh
+tests/run_solo_test.sh
 ```
 
 - **`run_registration_test.sh`** — every class/operator/panel/pref still resolves across a cold enable, the updater's in-session reload, and an `importlib.reload` over a live addon; plus a clean-teardown check and a static scan forbidding relative imports inside function bodies. Sandboxes `BLENDER_USER_SCRIPTS` and pins the auto-check flag so it never hits the network.
 - **`run_update_install_test.sh`** — drives the actual update install across both transitions (flat → restructured, restructured → restructured), asserting the install lands at the top level, orphans get cleaned, and backups capture the whole package. Sandboxes `BLENDER_USER_CONFIG` too, because the updater derives its staging and backup dirs from the config path; it refuses to run if it doesn't see itself sandboxed.
 
 - **`run_camera_overlay_test.sh`** — the only suite that tests the GPU for real. On 5.2 it calls `gpu.init()` to get a headless GL context, compiles the overlay shader, draws into a `GPUOffScreen` and **reads the pixels back**. Add `--gpu-backend vulkan` to the Blender invocation to run the identical suite on Vulkan — **both backends verified green**, which is what makes the "no backend branching" rule safe to rely on (David's machine is Vulkan/NVIDIA; `BOOL` push constants were the specific worry and they are fine): opacity 0/0.5/1.0, mask above and below threshold, invert, per-channel selection, and tint. Also checks the fit/scale/offset/rotation/flip maths against a known frame, that 20 enable/disable cycles leak no handler, and (by AST walk) that nothing reads `.pixels`. On 4.5/5.0/5.1 there is no `gpu.init`, so the GPU phases are skipped with a printed NOTE and the rest still runs — a skip is reported, never silently passed.
-- All four scripts install an atexit guard that forces a non-zero exit unless an explicit verdict line is reached. An uncaught exception aborts the Python script but Blender still exits 0, so a crashed run would otherwise look identical to a clean one.
+- **Every runner must sandbox `BLENDER_USER_EXTENSIONS` too.** `read_factory_settings` syncs extension wheels against "no extensions enabled" and DELETES the real install's `extensions/.local` site-packages (it stripped psutil from David's 5.2 on 2026-10-11; Blender re-synced it on next start). Scripts + config sandboxing alone does not cover it.
+- All five scripts install an atexit guard that forces a non-zero exit unless an explicit verdict line is reached. An uncaught exception aborts the Python script but Blender still exits 0, so a crashed run would otherwise look identical to a clean one.
 - `reset_scene()` in the festoon suite re-enables the addon: `read_factory_settings` resets PREFERENCES too, which disables it, and anything calling `bpy.ops.lightgroup.*` afterwards fails with "operator could not be found".
 - **`run_festoon_test.sh`** — builds real strands and inspects the evaluated geometry: the depth-peeling raycast skips hidden objects and festoon's own strands, the curve passes through the sag empty at every flatness, flatness broadens the bottom without moving the low point, bulb spacing responds, a parent move stays rigid, and each strand gets its own node group.
 
