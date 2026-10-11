@@ -41,6 +41,7 @@ echo
 
 BLENDER_USER_SCRIPTS="$SANDBOX" \
   BLENDER_USER_CONFIG="$SANDBOX/config" \
+  BLENDER_USER_EXTENSIONS="$SANDBOX/extensions" \
   "$BLENDER_EXE" \
   --background \
   --factory-startup \
