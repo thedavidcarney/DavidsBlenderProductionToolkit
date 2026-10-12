@@ -1,40 +1,67 @@
-"""Solo Light: preview the selected lights on their own, in the viewport.
+"""Solo Light mode: whichever light you click is the one you hear.
 
-One toggle. On: every other light in the view layer is hidden with the eye,
-and the World is switched off in every 3D viewport. Off: exactly what was
-changed is put back, nothing more.
+Turn the mode on, then click lights -- in the viewport or the outliner. The
+selected lights stay lit; every other light in the view layer goes dark, and
+the World is switched off in every 3D viewport. Shift-click to solo several.
+Clicking something that isn't a light keeps the current solo. Turn the mode
+off and everything is put back exactly as it was.
 
-VIEWPORT ONLY, BY CONSTRUCTION. Neither switch reaches a render:
+HOW A LIGHT IS MUTED: its ray visibility (camera, diffuse, glossy,
+transmission, volume scatter) is switched off. Measured to silence point,
+area, spot and sun lights completely in both Cycles and EEVEE. Unlike hiding
+it with the eye, the light stays in the viewport -- gizmo, outline and all --
+so it can still be clicked, which is the whole point of the mode.
 
-- The eye (`hide_set`) drops an object from the viewport depsgraph but not
-  from F12 / command-line renders, which read `hide_render`. That flag is
-  never touched here.
-- The World is muted through each viewport's own shading settings: Scene
-  World off, studio-light strength 0. Those live on the 3D view, not on the
-  World datablock, so its Strength and node tree are never edited.
+WHY THAT IS STILL SAFE FOR RENDERS: ray visibility does reach F12, so it is
+never allowed to. Every switch is put back before each render and each save,
+and re-applied straight after:
 
-So a file saved mid-solo still renders every light. That is the whole safety
-story: there is nothing to forget to undo before a render.
+- render_pre / render_post / render_cancel: F12 and animation renders see
+  every light. Verified: a soloed F12 matches an unsoloed one pixel for pixel.
+- save_pre / save_post: the .blend on disk NEVER has a muted light in it, so a
+  file saved mid-solo renders correctly on the farm or on a machine without
+  this addon. Re-muting after the save does not mark the file dirty.
 
-What gets muted is LIGHT objects only. Emissive meshes and festoon bulbs are
-left alone -- hiding one hides its geometry too, which is a different tool.
+The World is muted differently -- through each 3D view's own shading (Scene
+World off, studio-light strength 0) -- so its Strength and node tree are never
+edited and it needs no safety net at all.
 
-Only what this operator changed is restored: a light that was already hidden
-stays hidden, and each viewport gets its own World settings back.
+Only LIGHT objects are muted. Emissive meshes and festoon bulbs are untouched.
 """
 
 import bpy
 
 
+# Ray-visibility switches that, all off, make a light contribute nothing.
+RAY_FLAGS = (
+    "visible_camera",
+    "visible_diffuse",
+    "visible_glossy",
+    "visible_transmission",
+    "visible_volume_scatter",
+)
+
+
 # --- State, saved in the scene ----------------------------------------------
 #
-# Kept on the scene rather than in module globals so it survives a save and
-# reopen mid-solo, and travels with the file it describes.
+# On the scene rather than in module globals, so undo and save/reopen keep the
+# state and the switches it describes in step.
+
+class LightgroupSoloLight(bpy.types.PropertyGroup):
+    # A pointer rather than a name: renaming a light mid-solo must not strand
+    # it muted.
+    obj: bpy.props.PointerProperty(type=bpy.types.Object)
+
 
 class LightgroupSoloMuted(bpy.types.PropertyGroup):
-    # A pointer rather than a name: renaming a light mid-solo must not strand
-    # it hidden.
     obj: bpy.props.PointerProperty(type=bpy.types.Object)
+    # The light's own switches before we touched them, restored verbatim -- a
+    # light deliberately set to no-glossy stays that way.
+    visible_camera: bpy.props.BoolProperty()
+    visible_diffuse: bpy.props.BoolProperty()
+    visible_glossy: bpy.props.BoolProperty()
+    visible_transmission: bpy.props.BoolProperty()
+    visible_volume_scatter: bpy.props.BoolProperty()
 
 
 class LightgroupSoloSpace(bpy.types.PropertyGroup):
@@ -50,9 +77,83 @@ class LightgroupSoloSpace(bpy.types.PropertyGroup):
 class LightgroupSoloSettings(bpy.types.PropertyGroup):
     active: bpy.props.BoolProperty(default=False)
     view_layer: bpy.props.StringProperty()
-    soloed: bpy.props.CollectionProperty(type=LightgroupSoloMuted)
+    soloed: bpy.props.CollectionProperty(type=LightgroupSoloLight)
     muted: bpy.props.CollectionProperty(type=LightgroupSoloMuted)
     spaces: bpy.props.CollectionProperty(type=LightgroupSoloSpace)
+
+
+# --- Muting -------------------------------------------------------------------
+
+def _mute(settings, obj):
+    record = settings.muted.add()
+    record.obj = obj
+    for flag in RAY_FLAGS:
+        setattr(record, flag, getattr(obj, flag))
+        setattr(obj, flag, False)
+
+
+def _write_back(record):
+    obj = record.obj
+    if obj is None:  # deleted mid-solo
+        return
+    for flag in RAY_FLAGS:
+        if getattr(obj, flag) != getattr(record, flag):
+            setattr(obj, flag, getattr(record, flag))
+
+
+def _remute(record):
+    obj = record.obj
+    if obj is None:
+        return
+    for flag in RAY_FLAGS:
+        if getattr(obj, flag):
+            setattr(obj, flag, False)
+
+
+def _selected_lights(view_layer):
+    return [obj for obj in view_layer.objects.selected if obj.type == 'LIGHT']
+
+
+def _view_layer(scene, settings):
+    return scene.view_layers.get(settings.view_layer)
+
+
+def apply(scene, view_layer):
+    """Make the muted set match the current selection. Cheap when unchanged.
+
+    Runs on every depsgraph update while the mode is on, so the common case --
+    nothing about the selection changed -- has to cost a set comparison and
+    nothing else. Our own writes trigger one more update, which lands here and
+    finds nothing to do.
+    """
+    settings = scene.lightgroup_solo
+
+    selected = _selected_lights(view_layer)
+    if selected:
+        current = {r.obj for r in settings.soloed}
+        if set(selected) != current:
+            settings.soloed.clear()
+            for obj in selected:
+                settings.soloed.add().obj = obj
+    # Nothing selected, or a non-light clicked: keep the current solo, so
+    # clicking a mesh to look at it does not relight the whole scene.
+
+    soloed = {r.obj for r in settings.soloed}
+    wanted = {obj for obj in view_layer.objects
+              if obj.type == 'LIGHT' and obj not in soloed}
+    have = {r.obj for r in settings.muted}
+    if wanted == have:
+        return
+
+    # Unmute what should now be heard, in reverse so indices stay valid.
+    for index in range(len(settings.muted) - 1, -1, -1):
+        record = settings.muted[index]
+        if record.obj not in wanted:
+            _write_back(record)
+            settings.muted.remove(index)
+
+    for obj in wanted - have:
+        _mute(settings, obj)
 
 
 def _view3d_spaces():
@@ -74,27 +175,12 @@ def _redraw_viewports(context):
                 area.tag_redraw()
 
 
-def solo_on(context, lights):
-    """Mute every light except `lights`, and the World. Returns muted count."""
+def mode_on(context):
     settings = context.scene.lightgroup_solo
-    view_layer = context.view_layer
-    keep = set(lights)
-
     settings.muted.clear()
     settings.soloed.clear()
     settings.spaces.clear()
-    settings.view_layer = view_layer.name
-
-    for obj in lights:
-        settings.soloed.add().obj = obj
-
-    for obj in view_layer.objects:
-        # visible_get covers the eye, the monitor and hidden collections:
-        # anything already invisible is not ours to hide, or to unhide later.
-        if obj.type != 'LIGHT' or obj in keep or not obj.visible_get(view_layer=view_layer):
-            continue
-        obj.hide_set(True, view_layer=view_layer)
-        settings.muted.add().obj = obj
+    settings.view_layer = context.view_layer.name
 
     for screen, area_index, space in _view3d_spaces():
         record = settings.spaces.add()
@@ -106,24 +192,16 @@ def solo_on(context, lights):
         space.shading.studiolight_intensity = 0.0
 
     settings.active = True
+    apply(context.scene, context.view_layer)
     _redraw_viewports(context)
-    return len(settings.muted)
 
 
-def solo_off(context):
-    """Put back exactly what solo_on changed."""
+def mode_off(context):
+    """Put back exactly what the mode changed."""
     settings = context.scene.lightgroup_solo
-    view_layer = context.scene.view_layers.get(settings.view_layer) or context.view_layer
 
     for record in settings.muted:
-        obj = record.obj
-        if obj is None:  # deleted mid-solo
-            continue
-        try:
-            obj.hide_set(False, view_layer=view_layer)
-        except RuntimeError:
-            # Moved out of the view layer mid-solo; nothing to unhide.
-            pass
+        _write_back(record)
 
     for record in settings.spaces:
         screen = bpy.data.screens.get(record.screen)
@@ -143,27 +221,121 @@ def solo_off(context):
     _redraw_viewports(context)
 
 
+# --- Handlers -----------------------------------------------------------------
+#
+# All persistent, so they survive file loads; each one checks the scene's own
+# state, so a file that was never soloed costs one attribute read.
+
+def _active_settings(scene):
+    settings = getattr(scene, "lightgroup_solo", None)
+    if settings is None or not settings.active:
+        return None
+    return settings
+
+
+_applying = []
+
+
+@bpy.app.handlers.persistent
+def _on_depsgraph_update(scene, depsgraph):
+    if _applying or _suspended:
+        return
+    settings = _active_settings(scene)
+    if settings is None:
+        return
+    view_layer = _view_layer(scene, settings)
+    if view_layer is None or depsgraph.view_layer.name != view_layer.name:
+        return
+    _applying.append(True)
+    try:
+        apply(scene, view_layer)
+    except Exception:
+        # A handler that raises does so on every update. Say so once, then
+        # leave the scene alone rather than spamming the console.
+        import traceback
+        traceback.print_exc()
+    finally:
+        _applying.clear()
+
+
+# Scenes whose lights are currently written back for a render or save.
+_suspended = []
+
+
+@bpy.app.handlers.persistent
+def _suspend(*_args):
+    """Before a render or save: every muted light gets its own switches back."""
+    if _suspended:
+        return
+    for scene in bpy.data.scenes:
+        settings = _active_settings(scene)
+        if settings is None:
+            continue
+        for record in settings.muted:
+            _write_back(record)
+        _suspended.append(scene.name)
+
+
+@bpy.app.handlers.persistent
+def _resume(*_args):
+    """After the render or save: mute them again."""
+    names = list(_suspended)
+    _suspended.clear()
+    for name in names:
+        scene = bpy.data.scenes.get(name)
+        settings = _active_settings(scene) if scene else None
+        if settings is None:
+            continue
+        for record in settings.muted:
+            _remute(record)
+
+
+_HANDLERS = (
+    ("depsgraph_update_post", _on_depsgraph_update),
+    ("render_pre", _suspend),
+    ("render_post", _resume),
+    ("render_cancel", _resume),
+    ("save_pre", _suspend),
+    ("save_post", _resume),
+)
+
+
+def _is_ours(handler, func):
+    # Matched by name, not identity: after an importlib.reload the live
+    # handler is the OLD function object, and an identity check would leave
+    # it running beside the new one -- two handlers muting the same lights.
+    return (getattr(handler, "__module__", None) == func.__module__
+            and getattr(handler, "__name__", None) == func.__name__)
+
+
+def unregister_handlers():
+    for name, func in _HANDLERS:
+        handlers = getattr(bpy.app.handlers, name)
+        for handler in [h for h in handlers if _is_ours(h, func)]:
+            handlers.remove(handler)
+
+
+def register_handlers():
+    unregister_handlers()
+    for name, func in _HANDLERS:
+        getattr(bpy.app.handlers, name).append(func)
+
+
+# --- UI -------------------------------------------------------------------------
+
 class LIGHTGROUP_OT_solo_light(bpy.types.Operator):
-    """Viewport only: hide every other light and switch off the World so the selected lights can be judged on their own. Click again to restore"""
+    """Solo mode: whichever light you click is the only one lit, World off. Viewport only -- renders and saved files always get every light. Click again to leave the mode"""
     bl_idname = "lightgroup.solo_light"
     bl_label = "Solo Light"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        settings = context.scene.lightgroup_solo
-
-        if settings.active:
-            solo_off(context)
+        if context.scene.lightgroup_solo.active:
+            mode_off(context)
             self.report({'INFO'}, "Solo off: lights and World restored")
-            return {'FINISHED'}
-
-        lights = [obj for obj in context.selected_objects if obj.type == 'LIGHT']
-        if not lights:
-            self.report({'ERROR'}, "Select one or more lights to solo")
-            return {'CANCELLED'}
-
-        muted = solo_on(context, lights)
-        self.report({'INFO'}, f"Solo: {len(lights)} light(s), {muted} muted, World off (viewport only)")
+        else:
+            mode_on(context)
+            self.report({'INFO'}, "Solo on: click a light to hear it on its own")
         return {'FINISHED'}
 
 
@@ -182,12 +354,16 @@ def draw_solo(layout, context):
         box = layout.box()
         box.alert = True
         names = [r.obj.name for r in settings.soloed if r.obj is not None]
-        shown = ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
-        box.label(text=f"Soloing: {shown}", icon='LIGHT')
-        box.label(text=f"{len(settings.muted)} lights hidden, World off")
+        if names:
+            shown = ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
+            box.label(text=f"Soloing: {shown}", icon='LIGHT')
+        else:
+            box.label(text="Click a light to solo it", icon='LIGHT')
+        box.label(text=f"{len(settings.muted)} lights muted, World off")
 
 
 classes = (
+    LightgroupSoloLight,
     LightgroupSoloMuted,
     LightgroupSoloSpace,
     LightgroupSoloSettings,
@@ -198,8 +374,10 @@ classes = (
 def register_properties():
     bpy.types.Scene.lightgroup_solo = bpy.props.PointerProperty(
         type=LightgroupSoloSettings)
+    register_handlers()
 
 
 def unregister_properties():
+    unregister_handlers()
     if hasattr(bpy.types.Scene, "lightgroup_solo"):
         del bpy.types.Scene.lightgroup_solo

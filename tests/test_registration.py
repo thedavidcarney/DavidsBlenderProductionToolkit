@@ -195,6 +195,15 @@ def silence_auto_check():
         updater._auto_check_done_this_session = True
 
 
+SOLO_HANDLER_LISTS = ("depsgraph_update_post", "render_pre", "render_post",
+                      "render_cancel", "save_pre", "save_post")
+
+
+def solo_handler_count(handler_list):
+    return sum(1 for h in getattr(bpy.app.handlers, handler_list)
+               if getattr(h, "__module__", "").endswith("lightgroups.solo"))
+
+
 def assert_fully_registered(phase):
     """Every part of the v1.0.15 contract must resolve."""
     for cls_name in EXPECTED_CLASSES:
@@ -298,6 +307,13 @@ def assert_fully_registered(phase):
                 check(hasattr(solo_settings, field),
                       "[" + phase + "] lightgroup_solo setting '" + field
                       + "' missing")
+    # Solo's handlers mute lights live and put them back for renders and
+    # saves. Exactly one each: zero means a soloed file could save muted
+    # lights, two means a reload left a stale copy running beside the new one.
+    for handler_list in SOLO_HANDLER_LISTS:
+        count = solo_handler_count(handler_list)
+        check(count == 1, "[" + phase + "] " + str(count) + " Solo Light "
+              + handler_list + " handlers registered, expected exactly 1")
 
     # Camera Overlay's scene PointerProperty, same arrangement.
     check(hasattr(bpy.types.Scene, "cam_overlay"),
@@ -400,6 +416,10 @@ try:
           "[teardown] Scene.cam_overlay leaked past unregister")
     check(not hasattr(bpy.types.Scene, "lightgroup_solo"),
           "[teardown] Scene.lightgroup_solo leaked past unregister")
+    for handler_list in SOLO_HANDLER_LISTS:
+        check(solo_handler_count(handler_list) == 0,
+              "[teardown] Solo Light " + handler_list
+              + " handler survived addon_disable")
 
     # A leaked draw handler keeps drawing against unregistered properties,
     # which is a crash rather than a cosmetic bug. The overlay module also

@@ -178,27 +178,36 @@ No CI. Blender addons are ultimately tested by loading them in Blender — but `
 
 ## Solo Light
 
-`lightgroups/solo.py`, a toggle in the Lightgroups tab (3D View + Compositor;
-not the View Layer subset). On: every other LIGHT object in the view layer is
-eye-hidden and the World is switched off in every 3D viewport. Off: exactly
-what was changed is restored. State lives on `scene.lightgroup_solo`, so it
-survives save/reopen mid-solo.
+`lightgroups/solo.py`, a MODE toggle in the Lightgroups tab (3D View +
+Compositor; not the View Layer subset). While on, whatever lights are selected
+are the only ones lit -- click lights in the viewport or outliner and the solo
+follows. Clicking a non-light, or deselecting, keeps the current solo. The
+World is off in every 3D viewport. Off: exactly what changed is restored.
+(v1 was "select, click Solo, unsolo, repeat" with eye-hiding; David wanted a
+mode, and hidden lights can't be clicked in the viewport.)
 
-**Viewport only by construction, not by discipline.** The eye (`hide_set`)
-drops an object from the viewport depsgraph but F12 reads `hide_render`, which
-is never touched. The World is muted through each 3D view's shading
-(`use_scene_world_render = False`, `studiolight_intensity = 0`), never through
-the World datablock. So a file saved mid-solo still renders every light --
-the suite proves this with real Cycles renders, pixel-identical soloed vs not.
-Don't "simplify" to light energy / world Strength / ray visibility: all three
-reach the render, and energy breaks on keyframes and shared light data.
+**Muting = ray visibility** (camera/diffuse/glossy/transmission/volume off).
+Measured to silence point/area/spot/sun completely in Cycles AND EEVEE, and
+the light stays visible and clickable. The selection is followed from
+`depsgraph_update_post` (a click fires it; verified with real `view3d.select`
+clicks in a GUI run). Each light's own switches are stored and restored
+verbatim, as Object pointers (rename-safe).
 
-Only LIGHT objects are muted (David's scope: "only selected lights"); emissive
-meshes and festoon bulbs are untouched -- hiding them hides their geometry.
-Lights already hidden are not recorded, so unsolo never unhides them. Muted
-lights are stored as Object pointers (rename-safe); viewports by screen name +
-area index, since spaces can't carry properties. A 3D view opened mid-solo
-isn't muted. Verified in a real GUI viewport render, not just headless.
+**Ray visibility reaches the render, so it is never allowed to:**
+`render_pre`/`save_pre` write every light's switches back, `render_post`/
+`render_cancel`/`save_post` re-mute. A soloed F12 is pixel-identical to an
+unsoloed one (headless AND GUI F12), and a file saved mid-solo has no muted
+light on disk -- so the farm, or a machine without the addon, renders it
+correctly. Re-muting in save_post does not mark the file dirty (verified).
+These handlers are the safety story: don't drop any of them. The
+registration suite asserts exactly one of each, and none after disable
+(they're matched by name, so an importlib.reload can't leave a stale copy).
+
+The World is muted via each 3D view's shading (Scene World off, studio-light
+strength 0), never the World datablock -- viewport-only by construction, no
+safety net needed. Viewports are recorded by screen name + area index; one
+opened mid-mode isn't muted. Only LIGHT objects are muted; emissive meshes
+and festoon bulbs are untouched.
 
 ## Festoon Clicker
 
