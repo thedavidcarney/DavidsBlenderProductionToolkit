@@ -63,6 +63,7 @@ Sidebar panel in 3D View, Compositor, and View Layer properties. The 3D View and
   - Output: `//../../04_Renders/01_Components/{blend_name}_`
   - Format: `OPEN_EXR_MULTILAYER`, 16-bit half, DWAB codec, Filmic sRGB
   - Cycles only — hard-checks `render.engine == 'CYCLES'` and bails otherwise
+  - **Out of RAM fails silently:** with 100+ groups at 7700x1440 (~42 GB peak) failed allocations still log `Saved:` and exit 0, leaving truncated or missing EXRs. Check file sizes/layer counts after. A File Output on FOLLOW_SCENE writes tone-mapped values clipped at 1 even into EXR; only OVERRIDE + Linear Rec.709 is scene-linear. See `notes/many_lightgroups_split_output_findings.md`.
 
 A self-updater (`core/updater.py`) checks GitHub releases, downloads on demand into `<config>/lightgroup_tools_update/`, and installs on next Blender startup via a `load_post` handler that backs up the current addon folder to `<config>/lightgroup_tools_backup/`, copies the staged files into the addon dir, clears `__pycache__`, cleans up the staging dir, and attempts an in-session reload (`addon_disable` → `addon_enable`) with a restart fallback. A "Restore Previous Version" button is exposed in the panel when a backup exists.
 
