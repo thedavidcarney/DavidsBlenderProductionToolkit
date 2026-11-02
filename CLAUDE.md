@@ -13,6 +13,8 @@ lightgroup_tools/          <- folder name is FROZEN; the updater keys off it
 │   └── tags.py            custom-property tags shared BETWEEN tools
 ├── lightgroups/           the 'Lightgroups' sidebar tab
 │   ├── operators.py
+│   ├── solo.py            Solo Light mode
+│   ├── output_check.py    checks each File Output EXR after every frame
 │   └── panels.py
 ├── festoon/               the 'Festoon Clicker' sidebar tab
 │   ├── picking.py         visibility-aware viewport raycasting
@@ -63,6 +65,9 @@ Sidebar panel in 3D View, Compositor, and View Layer properties. The 3D View and
   - Output: `//../../04_Renders/01_Components/{blend_name}_`
   - Format: `OPEN_EXR_MULTILAYER`, 16-bit half, DWAB codec, Filmic sRGB
   - Cycles only — hard-checks `render.engine == 'CYCLES'` and bails otherwise
+  - **5.2+ writes ONE EXR per frame** (`setup_single_exr`, from Noah's patch): `render.save_output` is turned off so the File Output is the only writer, `Alpha` and every `Denoising *` pass are skipped (`Image.A` is the alpha, measured exact), and `Image` gets its own Denoise node unless scene AND view layer render denoising are both on. A Group Output shows the beauty in the render window. 5.0/5.1 keep the old two-file setup because `save_output` doesn't exist there. The setting saves in the .blend, so on a processed file an animation render with compositing off or no active File Output errors out. With it off, Overwrite-off no longer skips finished frames on a re-run (it checks the render output path), so a restart re-renders from the first frame.
+  - **Every item stays RGBA, deliberately.** Noah's patch also typed Depth/Mist/Normal/Vector/Position as FLOAT/VECTOR. Held back: EXRDemux only reads R/G/B/A so they load as opaque black, Mist is used in AE as Luminosity and a Luma matte, and DWAB is still lossy on `.Y` (`Position.Y` off by up to 0.97). So Depth stays unusable for now. Changing this needs EXRDemux changed first and the `ae-expert` consulted. Crypto needs nothing: already float and bit-exact as a plain RGBA item (tested on a toy scene; a teammate has reported crypto trouble, not yet seen).
+  - **Post-render output check** (`lightgroups/output_check.py`): after each frame, each active multilayer File Output's file must exist, be newer than the frame's start, have complete EXR offset tables and enough parts. Problems print and show red in the panel; the render carries on. It parses EXR headers in plain Python, so it has no library dependency, and it is read-only. It catches the silent out-of-memory failure below (tested on hand-damaged files, not a real OOM).
   - **Out of RAM fails silently:** with 100+ groups at 7700x1440 (~42 GB peak) failed allocations still log `Saved:` and exit 0, leaving truncated or missing EXRs. Check file sizes/layer counts after. A File Output on FOLLOW_SCENE writes tone-mapped values clipped at 1 even into EXR; only OVERRIDE + Linear Rec.709 is scene-linear. See `notes/many_lightgroups_split_output_findings.md`.
 
 A self-updater (`core/updater.py`) checks GitHub releases, downloads on demand into `<config>/lightgroup_tools_update/`, and installs on next Blender startup via a `load_post` handler that backs up the current addon folder to `<config>/lightgroup_tools_backup/`, copies the staged files into the addon dir, clears `__pycache__`, cleans up the staging dir, and attempts an in-session reload (`addon_disable` → `addon_enable`) with a restart fallback. A "Restore Previous Version" button is exposed in the panel when a backup exists.
@@ -612,7 +617,7 @@ a minimal repro; several are 5.2-only regressions.
 
 ## Tests
 
-No framework, no CI — five headless scripts, all of which sandbox Blender so they never touch the real install:
+No framework, no CI — six headless scripts, all of which sandbox Blender so they never touch the real install:
 
 ```bash
 tests/run_registration_test.sh          # add "5.0" etc. for a specific Blender
@@ -620,11 +625,13 @@ tests/run_update_install_test.sh
 tests/run_festoon_test.sh
 tests/run_camera_overlay_test.sh
 tests/run_solo_test.sh
+tests/run_single_exr_test.sh
 ```
 
 - **`run_registration_test.sh`** — every class/operator/panel/pref still resolves across a cold enable, the updater's in-session reload, and an `importlib.reload` over a live addon; plus a clean-teardown check and a static scan forbidding relative imports inside function bodies. Sandboxes `BLENDER_USER_SCRIPTS` and pins the auto-check flag so it never hits the network.
 - **`run_update_install_test.sh`** — drives the actual update install across both transitions (flat → restructured, restructured → restructured), asserting the install lands at the top level, orphans get cleaned, and backups capture the whole package. Sandboxes `BLENDER_USER_CONFIG` too, because the updater derives its staging and backup dirs from the config path; it refuses to run if it doesn't see itself sandboxed.
 
+- **`run_single_exr_test.sh`** — real Cycles renders read back from disk: one file per frame, the layer list, Crypto and `Image.A` against a lossless render output from the same render, and the output check against missing, stale, cut-off and short files. On 5.0/5.1 it pins the two-file setup and runs only the output check.
 - **`run_camera_overlay_test.sh`** — the only suite that tests the GPU for real. On 5.2 it calls `gpu.init()` to get a headless GL context, compiles the overlay shader, draws into a `GPUOffScreen` and **reads the pixels back**. Add `--gpu-backend vulkan` to the Blender invocation to run the identical suite on Vulkan — **both backends verified green**, which is what makes the "no backend branching" rule safe to rely on (David's machine is Vulkan/NVIDIA; `BOOL` push constants were the specific worry and they are fine): opacity 0/0.5/1.0, mask above and below threshold, invert, per-channel selection, and tint. Also checks the fit/scale/offset/rotation/flip maths against a known frame, that 20 enable/disable cycles leak no handler, and (by AST walk) that nothing reads `.pixels`. On 4.5/5.0/5.1 there is no `gpu.init`, so the GPU phases are skipped with a printed NOTE and the rest still runs — a skip is reported, never silently passed.
 - **Every runner must sandbox `BLENDER_USER_EXTENSIONS` too.** `read_factory_settings` syncs extension wheels against "no extensions enabled" and DELETES the real install's `extensions/.local` site-packages (it stripped psutil from David's 5.2 on 2026-10-11; Blender re-synced it on next start). Scripts + config sandboxing alone does not cover it.
 - All five scripts install an atexit guard that forces a non-zero exit unless an explicit verdict line is reached. An uncaught exception aborts the Python script but Blender still exits 0, so a crashed run would otherwise look identical to a clean one.

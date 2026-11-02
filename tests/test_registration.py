@@ -204,6 +204,14 @@ def solo_handler_count(handler_list):
                if getattr(h, "__module__", "").endswith("lightgroups.solo"))
 
 
+OUTPUT_CHECK_HANDLER_LISTS = ("render_init", "render_pre", "render_post")
+
+
+def output_check_handler_count(handler_list):
+    return sum(1 for h in getattr(bpy.app.handlers, handler_list)
+               if getattr(h, "__module__", "").endswith("lightgroups.output_check"))
+
+
 def assert_fully_registered(phase):
     """Every part of the v1.0.15 contract must resolve."""
     for cls_name in EXPECTED_CLASSES:
@@ -314,6 +322,10 @@ def assert_fully_registered(phase):
         count = solo_handler_count(handler_list)
         check(count == 1, "[" + phase + "] " + str(count) + " Solo Light "
               + handler_list + " handlers registered, expected exactly 1")
+    for handler_list in OUTPUT_CHECK_HANDLER_LISTS:
+        count = output_check_handler_count(handler_list)
+        check(count == 1, "[" + phase + "] " + str(count) + " output check "
+              + handler_list + " handlers registered, expected exactly 1")
 
     # Camera Overlay's scene PointerProperty, same arrangement.
     check(hasattr(bpy.types.Scene, "cam_overlay"),
@@ -419,6 +431,10 @@ try:
     for handler_list in SOLO_HANDLER_LISTS:
         check(solo_handler_count(handler_list) == 0,
               "[teardown] Solo Light " + handler_list
+              + " handler survived addon_disable")
+    for handler_list in OUTPUT_CHECK_HANDLER_LISTS:
+        check(output_check_handler_count(handler_list) == 0,
+              "[teardown] output check " + handler_list
               + " handler survived addon_disable")
 
     # A leaked draw handler keeps drawing against unregistered properties,

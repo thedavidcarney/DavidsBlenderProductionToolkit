@@ -10,6 +10,7 @@ this package's submodules BEFORE reloading this package.
 
 from . import operators
 from . import solo
+from . import output_check
 from . import panels
 
 classes = (
@@ -22,7 +23,9 @@ classes = (
 
 def register_properties():
     solo.register_properties()
+    output_check.register_handlers()
 
 
 def unregister_properties():
+    output_check.unregister_handlers()
     solo.unregister_properties()

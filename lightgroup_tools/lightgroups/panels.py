@@ -12,6 +12,7 @@ import bpy
 # the update panel silently and only for whoever clicked the button.
 from ..core import updater
 from . import solo
+from . import output_check
 
 
 def _get_prefs(context):
@@ -45,6 +46,7 @@ def _draw_tools(layout, context):
 
     layout.label(text="Compositor:")
     layout.operator("lightgroup.denoise_all_cycles", icon='NODE_COMPOSITING')
+    output_check.draw_status(layout, context)
 
     layout.separator()
 

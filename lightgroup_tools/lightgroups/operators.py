@@ -197,6 +197,138 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Render Layers outputs that never belong in the single EXR. Alpha is already
+# the A channel of Image (on its own it gets run through the Filmic override as
+# if it were colour), and the noisy beauty is superseded by the denoised one.
+# Every "Denoising ..." pass is skipped by prefix further down -- 5.x keeps
+# adding new ones (Specular Albedo, Roughness) and they are all denoiser fodder.
+SINGLE_EXR_SKIP = {"Alpha", "Noisy Image", "Noisy Shadow Catcher"}
+
+
+def setup_single_exr(operator, context):
+    """5.2+: denoised lightgroups, beauty and every other pass in ONE EXR.
+
+    The older setup leaves the scene's render output on, so every animation
+    frame is written twice: the File Output EXR, plus the render output dumping
+    every view-layer pass a second time. Nobody knew which file was the real
+    one. Here the File Output node is the only writer. `render.save_output`
+    does not exist before 5.2, which is why this is version-gated.
+
+    Every item stays RGBA on purpose. Typing Depth, Mist and Normal as FLOAT or
+    VECTOR does stop Filmic damaging them, but EXRDemux only reads R/G/B/A and
+    would load them as opaque black, and DWAB is still lossy on their .Y
+    channel. Crypto needs nothing: 5.2 already writes it bit-exact, as float.
+    """
+    scene = context.scene
+    viewLayer = context.view_layer
+    lightGroupsNames = [lg.name for lg in viewLayer.lightgroups]
+
+    viewLayer.cycles.denoising_store_passes = True
+    # The File Output node only runs if the compositor does.
+    scene.render.use_compositing = True
+
+    tree = scene.compositing_node_group
+    if tree is None:
+        tree = bpy.data.node_groups.new(name="Compositor", type='CompositorNodeTree')
+        scene.compositing_node_group = tree
+
+    # The compositor is rebuilt from scratch, so a File Output left over from
+    # an older setup can't keep writing a 2nd file.
+    for node in list(tree.nodes):
+        tree.nodes.remove(node)
+    links = tree.links
+
+    renderLayersNode = tree.nodes.new(type='CompositorNodeRLayers')
+    renderLayersNode.location = 0, 0
+    # A new Render Layers node defaults to the scene's FIRST view layer, not
+    # the active one, so pin it.
+    renderLayersNode.scene = scene
+    renderLayersNode.layer = viewLayer.name
+    outputs = {o.name: o for o in renderLayersNode.outputs if o.enabled}
+
+    albedo = outputs.get("Denoising Albedo")
+    normal = outputs.get("Denoising Normal")
+    if albedo is None or normal is None:
+        operator.report({'ERROR'}, f"Denoising outputs not found on view layer '{viewLayer.name}'. Enable 'Denoising Data' in its Passes settings.")
+        return {'CANCELLED'}
+
+    def add_denoise(source, y):
+        denoiseNode = tree.nodes.new(type='CompositorNodeDenoise')
+        denoiseNode.location = 500, y
+        links.new(source, denoiseNode.inputs["Image"])
+        links.new(albedo, denoiseNode.inputs["Albedo"])
+        links.new(normal, denoiseNode.inputs["Normal"])
+        return denoiseNode.outputs["Image"]
+
+    outputNode = tree.nodes.new(type='CompositorNodeOutputFile')
+    outputNode.directory = "//../../04_Renders/01_Components/"
+    outputNode.file_name = "{blend_name}_"
+    outputNode.location = 1000, -250
+    outputNode.width = 500
+
+    fmt = outputNode.format
+    fmt.media_type = 'MULTI_LAYER_IMAGE'
+    fmt.file_format = 'OPEN_EXR_MULTILAYER'
+    fmt.color_depth = '16'
+    fmt.exr_codec = 'DWAB'
+    fmt.quality = 15
+    fmt.color_management = 'OVERRIDE'
+    # Last, and read back: a wrong colour space here would quietly change the
+    # brightness of every pass in AE.
+    fmt.linear_colorspace_settings.name = 'Filmic sRGB'
+    if fmt.linear_colorspace_settings.name != 'Filmic sRGB':
+        operator.report({'ERROR'}, f"Output colour space stuck at '{fmt.linear_colorspace_settings.name}', expected Filmic sRGB")
+        return {'CANCELLED'}
+
+    def add_layer(name, source):
+        outputNode.file_output_items.new('RGBA', name=name)
+        links.new(source, outputNode.inputs[len(outputNode.file_output_items) - 1])
+
+    used = {"Image", "Denoising Albedo", "Denoising Normal"}
+    y = 0
+
+    # Lightgroups, denoised one by one.
+    for name in lightGroupsNames:
+        source = outputs.get(f"Combined_{name}")
+        used.add(f"Combined_{name}")
+        if source is None:
+            print(f"WARNING: Could not find output for light group 'Combined_{name}'")
+            continue
+        add_layer(name, add_denoise(source, y))
+        y -= 250
+
+    # Beauty. Image is only already denoised when BOTH the scene and this view
+    # layer have render denoising on; otherwise denoise it here, so the file
+    # never holds a noisy beauty.
+    beauty = outputs["Image"]
+    if not (scene.cycles.use_denoising and viewLayer.cycles.use_denoising):
+        beauty = add_denoise(beauty, y)
+    add_layer("Image", beauty)
+
+    # Show the same beauty in the render window.
+    if not any(item.item_type == 'SOCKET' and item.in_out == 'OUTPUT' for item in tree.interface.items_tree):
+        tree.interface.new_socket("Image", in_out='OUTPUT', socket_type='NodeSocketColor')
+    groupOutputNode = tree.nodes.new(type='NodeGroupOutput')
+    groupOutputNode.location = 1000, 250
+    links.new(beauty, groupOutputNode.inputs[0])
+
+    # Depth, Crypto, AOVs and any other enabled pass.
+    extras = []
+    for output in renderLayersNode.outputs:
+        if (not output.enabled or output.name in used or output.name in SINGLE_EXR_SKIP
+                or output.name.startswith("Denoising ")):
+            continue
+        add_layer(output.name, output)
+        extras.append(output.name)
+
+    # The File Output node is now the only thing that writes frames.
+    scene.render.save_output = False
+
+    print(f"Single EXR: {lightGroupsNames} + Image + {extras}")
+    operator.report({'INFO'}, f"Single EXR: {len(lightGroupsNames)} denoised lightgroups + Image + {len(extras)} passes. Render output turned off.")
+    return {'FINISHED'}
+
+
 class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
     """Set up compositor to denoise all lightgroups (Cycles only)"""
     bl_idname = "lightgroup.denoise_all_cycles"
@@ -208,6 +340,11 @@ class LIGHTGROUP_OT_denoise_all_cycles(bpy.types.Operator):
         if context.scene.render.engine != 'CYCLES':
             self.report({'ERROR'}, "This script requires Cycles render engine. Please switch to Cycles and try again.")
             return {'CANCELLED'}
+
+        # 5.2+ writes everything through one File Output and turns the render
+        # output off. Older versions keep the original two-file setup below.
+        if bpy.app.version >= (5, 2, 0):
+            return setup_single_exr(self, context)
         
         # SET UP COMPOSITOR
         # Prep lightgroups variables

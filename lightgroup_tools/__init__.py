@@ -47,6 +47,7 @@ if "core" in locals():
     importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
     importlib.reload(lightgroups.solo)
+    importlib.reload(lightgroups.output_check)
     importlib.reload(lightgroups.panels)
     # festoon's own submodules import each other, so they reload innermost
     # first: picking and shape are leaves, nodes feeds rig, rig feeds operators.
