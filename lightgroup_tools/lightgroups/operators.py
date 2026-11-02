@@ -217,10 +217,11 @@ def setup_single_exr(operator, context):
     one. Here the File Output node is the only writer. `render.save_output`
     does not exist before 5.2, which is why this is version-gated.
 
-    Every item stays RGBA on purpose. Typing Depth, Mist and Normal as FLOAT or
-    VECTOR does stop Filmic damaging them, but EXRDemux only reads R/G/B/A and
-    would load them as opaque black, and DWAB is still lossy on their .Y
-    channel. Crypto needs nothing: 5.2 already writes it bit-exact, as float.
+    Every item stays RGBA on purpose: the team uses Mist stylistically and
+    doesn't need exact values. Typing Depth, Mist and Normal as FLOAT or VECTOR
+    would stop Filmic touching them, but EXRDemux only reads R/G/B/A and would
+    load them as opaque black, and DWAB is still lossy on their .Y channel.
+    Crypto needs nothing: 5.2 already writes it bit-exact, as float.
     """
     scene = context.scene
     viewLayer = context.view_layer
