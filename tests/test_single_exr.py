@@ -5,7 +5,7 @@ Run via tests/run_single_exr_test.sh, never directly against a real install.
 
 What is under test, on 5.2+:
   - one animation frame writes one EXR, and only that, into 01_Components
-  - the layers: lightgroups first, then Image, then the rest; no Alpha, no
+  - the layers: lightgroups first, then Image, then the rest, Alpha included; no
     Denoising passes, every item still RGBA (see setup_single_exr for why)
   - against a lossless render output from the SAME render: Crypto is bit-exact
     and Image.A is exact, even denoised
@@ -157,8 +157,10 @@ def test_layers_and_files():
     for name in ("Depth", "Mist", "Normal", "CryptoObject00", "CryptoMaterial00"):
         check(name in names, "%s is missing from the File Output" % name)
     for name in names:
-        check(name != "Alpha" and name != "Noisy Image" and not name.startswith("Denoising "),
+        check(name != "Noisy Image" and not name.startswith("Denoising "),
               "%s must not be in the File Output" % name)
+    # The template's Stencil Luma reads this layer. Losing it blanks comps silently.
+    check("Alpha" in names, "Alpha is missing from the File Output")
     # EXRDemux reads R/G/B/A only. If this changes, EXRDemux has to change first.
     for item in node.file_output_items:
         check(item.socket_type == 'RGBA', "%s is %s, not RGBA" % (item.name, item.socket_type))

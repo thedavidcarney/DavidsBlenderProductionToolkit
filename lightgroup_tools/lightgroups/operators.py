@@ -197,12 +197,15 @@ class LIGHTGROUP_OT_create_for_each_light(bpy.types.Operator):
         return {'FINISHED'}
 
 
-# Render Layers outputs that never belong in the single EXR. Alpha is already
-# the A channel of Image (on its own it gets run through the Filmic override as
-# if it were colour), and the noisy beauty is superseded by the denoised one.
-# Every "Denoising ..." pass is skipped by prefix further down -- 5.x keeps
-# adding new ones (Specular Albedo, Roughness) and they are all denoiser fodder.
-SINGLE_EXR_SKIP = {"Alpha", "Noisy Image", "Noisy Shadow Catcher"}
+# Render Layers outputs that never belong in the single EXR: the noisy beauty
+# is superseded by the denoised one. Every "Denoising ..." pass is skipped by
+# prefix further down -- 5.x keeps adding new ones (Specular Albedo, Roughness)
+# and they are all denoiser fodder.
+#
+# Alpha stays, even though Image.A holds the true alpha. The team template uses
+# this layer's RGB as a Stencil Luma (measured by PostPost on the ambient chase),
+# and a missing layer blanks those comps in AE without an error.
+SINGLE_EXR_SKIP = {"Noisy Image", "Noisy Shadow Catcher"}
 
 
 def setup_single_exr(operator, context):
