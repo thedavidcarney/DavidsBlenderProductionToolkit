@@ -138,8 +138,6 @@ def draw_release_info(layout, prefs, show_heading=True):
         warning = layout.box()
         warning.alert = True
         warning.label(text="EXPERIMENTAL RELEASE", icon='ERROR')
-        warning.label(text="Not fully tested. If you are mid-job,")
-        warning.label(text="finish the job first.")
 
     notes = (prefs.latest_notes or "").strip()
     if not notes:
