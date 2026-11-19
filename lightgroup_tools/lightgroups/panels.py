@@ -52,6 +52,9 @@ def _draw_tools(layout, context):
 
     # Update section
     layout.label(text="Updates:")
+    # v1.0.21 is the last self-updating build; the team installs through IFTK
+    # from here on. Shown always, so someone who skipped the popup still sees it.
+    layout.label(text="Future updates come through IFTK", icon='INFO')
 
     if prefs:
         # Sticky restart-required notice from a recent in-session install
