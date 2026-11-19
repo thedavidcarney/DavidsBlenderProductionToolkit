@@ -10,7 +10,6 @@ below is rebuilt from stale module objects and register() hands Blender the
 previous build's classes.
 """
 
-from . import tags
 from . import diagnostics
 from . import updater
 

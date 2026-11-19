@@ -67,9 +67,6 @@ EXPECTED_OPERATORS = (
     "lightgroup.update_dialog",
     "lightgroup.restart_dialog",
     "lightgroup.close_dialog",
-    "festoon.place_strand",
-    "festoon.place_spiral",
-    "festoon.select_controls",
     "lightgroup.write_diagnostics",
     "camoverlay.match_resolution",
     "lightgroup.solo_light",
@@ -79,7 +76,7 @@ EXPECTED_OPERATORS = (
 # neither appears in bpy.types under its class name:
 #   LightgroupToolsPreferences -- an AddonPreferences registers under its
 #     bl_idname (the module name) instead.
-#   FestoonSettings, CameraOverlaySettings -- a PropertyGroup is reached
+#   CameraOverlaySettings -- a PropertyGroup is reached
 #     through the ID property it is attached to.
 # All are verified functionally in assert_fully_registered() instead.
 EXPECTED_CLASSES = (
@@ -97,11 +94,6 @@ EXPECTED_CLASSES = (
     "LIGHTGROUP_PT_main_panel",
     "LIGHTGROUP_PT_compositor_panel",
     "LIGHTGROUP_PT_viewlayer_panel",
-    "FESTOON_OT_place_strand",
-    "FESTOON_OT_place_spiral",
-    "FESTOON_OT_select_controls",
-    "FESTOON_PT_main_panel",
-    "FESTOON_PT_strand_panel",
     "LIGHTGROUP_OT_write_diagnostics",
     "CAMOVERLAY_PT_main_panel",
     "CAMOVERLAY_PT_display_panel",
@@ -112,18 +104,15 @@ EXPECTED_CLASSES = (
 )
 
 # Panel placement is part of the contract too: the restructure must NOT move
-# the lightgroup panels out of the 'Lightgroups' tab. Festoon gets its own.
+# the lightgroup panels out of the 'Lightgroups' tab. Other tools get their own.
 # The properties-editor panel has no tab, hence None.
 EXPECTED_PANELS = {
     "LIGHTGROUP_PT_main_panel": ("VIEW_3D", "Lightgroups"),
     "LIGHTGROUP_PT_compositor_panel": ("NODE_EDITOR", "Lightgroups"),
     "LIGHTGROUP_PT_viewlayer_panel": ("PROPERTIES", None),
-    # Festoon Clicker is deliberately a SEPARATE tab. If these ever read
+    # Camera Overlay is deliberately a SEPARATE tab. If these ever read
     # 'Lightgroups', an unrelated building tool has leaked into the panel the
     # team uses on every job.
-    "FESTOON_PT_main_panel": ("VIEW_3D", "Festoon Clicker"),
-    "FESTOON_PT_strand_panel": ("VIEW_3D", "Festoon Clicker"),
-    # Camera Overlay is a third separate tab, for the same reason.
     "CAMOVERLAY_PT_main_panel": ("VIEW_3D", "Camera Overlay"),
     "CAMOVERLAY_PT_display_panel": ("VIEW_3D", "Camera Overlay"),
     "CAMOVERLAY_PT_transform_panel": ("VIEW_3D", "Camera Overlay"),
@@ -287,21 +276,7 @@ def assert_fully_registered(phase):
         check(updater.install_update_on_load in bpy.app.handlers.load_post,
               "[" + phase + "] install_update_on_load not registered on load_post")
 
-    # Festoon's scene PointerProperty is registered separately from the class
-    # list, after the classes, because it references FestoonSettings.
-    check(hasattr(bpy.types.Scene, "festoon_settings"),
-          "[" + phase + "] Scene.festoon_settings not registered")
     scene = getattr(bpy.context, "scene", None)
-    if scene is not None:
-        settings = getattr(scene, "festoon_settings", None)
-        if check(settings is not None,
-                 "[" + phase + "] scene.festoon_settings does not resolve"):
-            check(type(settings).__name__ == "FestoonSettings",
-                  "[" + phase + "] festoon_settings is a "
-                  + type(settings).__name__ + ", expected FestoonSettings")
-            for field in ("sag_along", "sag_v_ratio", "flatness", "bulb_object"):
-                check(hasattr(settings, field),
-                      "[" + phase + "] festoon setting '" + field + "' missing")
 
     # Solo Light's scene state. It lives in lightgroups/, so unlike the two
     # building tools it is NOT behind _guarded() -- a failure here is loud.
@@ -422,8 +397,6 @@ try:
               "[teardown] bpy.types." + cls_name + " still registered after disable")
     check(bpy.context.preferences.addons.get(ADDON) is None,
           "[teardown] addon still present in context.preferences.addons after disable")
-    check(not hasattr(bpy.types.Scene, "festoon_settings"),
-          "[teardown] Scene.festoon_settings leaked past unregister")
     check(not hasattr(bpy.types.Scene, "cam_overlay"),
           "[teardown] Scene.cam_overlay leaked past unregister")
     check(not hasattr(bpy.types.Scene, "lightgroup_solo"),
@@ -522,9 +495,9 @@ except Exception as exc:  # noqa: BLE001
 # registered -- so Lightgroups half-worked for that session and would have
 # been gone entirely after the next restart, preferences orphaned.
 #
-# Lightgroups is used on every job. Festoon and Camera Overlay are building
-# aids that touch the GPU and the depsgraph, where platform- and
-# driver-specific failures live. So those two are isolated, and this asserts
+# Lightgroups is used on every job. Camera Overlay is a building aid that
+# touches the GPU, where platform- and driver-specific failures live. So it is
+# isolated, and this asserts
 # the isolation actually holds rather than trusting the try/except by eye.
 
 print("=== phase 6: a failing building tool must not break Lightgroups ===")
@@ -540,7 +513,7 @@ try:
     package = importlib.import_module(ADDON)
 
     # Break each building tool in turn, the way a driver fault would.
-    for tool_name in ("camera_overlay", "festoon"):
+    for tool_name in ("camera_overlay",):
         tool = getattr(package, tool_name)
         original = tool.register
 

@@ -14,7 +14,6 @@ import bpy
 #
 #   core/            shared infrastructure (updater, preferences)
 #   lightgroups/     the Lightgroups tab
-#   festoon/         the Festoon Clicker tab
 #   camera_overlay/  the Camera Overlay tab
 #
 # Each subpackage owns a `classes` tuple; this module just aggregates and
@@ -42,22 +41,12 @@ import bpy
 if "core" in locals():
     import importlib
 
-    importlib.reload(core.tags)
     importlib.reload(core.diagnostics)
     importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
     importlib.reload(lightgroups.solo)
     importlib.reload(lightgroups.output_check)
     importlib.reload(lightgroups.panels)
-    # festoon's own submodules import each other, so they reload innermost
-    # first: picking and shape are leaves, nodes feeds rig, rig feeds operators.
-    importlib.reload(festoon.picking)
-    importlib.reload(festoon.shape)
-    importlib.reload(festoon.overlay)
-    importlib.reload(festoon.nodes)
-    importlib.reload(festoon.rig)
-    importlib.reload(festoon.operators)
-    importlib.reload(festoon.panels)
     # camera_overlay: overlay is the leaf (it owns the GPU state); props and
     # panels both import it.
     importlib.reload(camera_overlay.overlay)
@@ -66,19 +55,16 @@ if "core" in locals():
     importlib.reload(camera_overlay.panels)
     importlib.reload(core)
     importlib.reload(lightgroups)
-    importlib.reload(festoon)
     importlib.reload(camera_overlay)
 else:
     from . import core
     from . import lightgroups
-    from . import festoon
     from . import camera_overlay
 
 
 # Registration order across the toolkit. Preferences land first (via core), and
 # panels last, matching what shipped in v1.0.15.
-classes = (core.classes + lightgroups.classes + festoon.classes
-           + camera_overlay.classes)
+classes = core.classes + lightgroups.classes + camera_overlay.classes
 
 
 def _guarded(action, tool_name, func):
@@ -89,11 +75,10 @@ def _guarded(action, tool_name, func):
     stay registered -- so Lightgroups half-works for the rest of the session
     and is simply gone after the next restart, preferences orphaned.
 
-    Lightgroups is the tool this team uses on every job; Festoon and Camera
-    Overlay are building aids that touch the GPU and the depsgraph, which is
-    where driver- and platform-specific failures live. A broken building tool
-    must not cost anyone their lightpass workflow mid-job, so those two are
-    isolated. core/ and lightgroups/ are deliberately NOT guarded: if they
+    Lightgroups is the tool this team uses on every job; Camera Overlay is a
+    building aid that touches the GPU, which is where driver- and
+    platform-specific failures live. A broken building tool must not cost
+    anyone their lightpass workflow mid-job, so it is isolated. core/ and lightgroups/ are deliberately NOT guarded: if they
     fail, the addon really is broken and should say so loudly.
 
     The failure is printed in full, never swallowed -- a silent degradation
@@ -119,7 +104,6 @@ def register():
     # After the classes: these register scene PointerProperties that
     # reference their own PropertyGroups, which have to be registered types
     # by the time the pointer is created.
-    _guarded("register", "Festoon Clicker", festoon.register)
     _guarded("register", "Camera Overlay", camera_overlay.register)
 
 
@@ -128,7 +112,6 @@ def unregister():
     # part way may well fail to tear down cleanly too. Leaking one tool's
     # handler must not stop the classes below from unregistering.
     _guarded("unregister", "Camera Overlay", camera_overlay.unregister)
-    _guarded("unregister", "Festoon Clicker", festoon.unregister)
     lightgroups.unregister_properties()
     for cls in classes:
         bpy.utils.unregister_class(cls)

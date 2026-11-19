@@ -5,7 +5,7 @@ Run with tests/run_camera_overlay_test.sh, which sandboxes the scripts dir.
 
 Why this can test the GPU at all
 --------------------------------
-Festoon's overlay is verified by eye because a background Blender has no GL
+A background Blender used to have no GL
 context. That stopped being true in 5.2: `gpu.init()` brings up a real
 offscreen OpenGL backend, so from 5.2 on the shader can be compiled, run, and
 the resulting PIXELS read back and checked. On 4.5/5.0/5.1 there is no

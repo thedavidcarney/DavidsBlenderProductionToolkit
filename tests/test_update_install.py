@@ -91,7 +91,7 @@ def tree(root):
 # --- Safety: refuse to touch the real Blender config ------------------------
 
 config_dir = bpy.utils.user_resource('CONFIG')
-sandbox = os.environ.get("FESTOON_TEST_SANDBOX", "")
+sandbox = os.environ.get("TOOLKIT_TEST_SANDBOX", "")
 
 if not sandbox or os.path.realpath(sandbox) not in os.path.realpath(config_dir):
     print("REFUSING TO RUN: config dir is not inside the test sandbox.")

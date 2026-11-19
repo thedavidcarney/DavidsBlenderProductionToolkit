@@ -120,7 +120,6 @@ def _registration_lines():
     lines.append("  enabled in prefs: %s" % enabled)
 
     for tab, panel in (("Lightgroups", "LIGHTGROUP_PT_main_panel"),
-                       ("Festoon Clicker", "FESTOON_PT_main_panel"),
                        ("Camera Overlay", "CAMOVERLAY_PT_main_panel")):
         present = hasattr(bpy.types, panel)
         lines.append("  %-16s %s" % (tab + ":",

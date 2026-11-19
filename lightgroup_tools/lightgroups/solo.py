@@ -26,7 +26,7 @@ The World is muted differently -- through each 3D view's own shading (Scene
 World off, studio-light strength 0) -- so its Strength and node tree are never
 edited and it needs no safety net at all.
 
-Only LIGHT objects are muted. Emissive meshes and festoon bulbs are untouched.
+Only LIGHT objects are muted. Emissive meshes are untouched.
 """
 
 import bpy
