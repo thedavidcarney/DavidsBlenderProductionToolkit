@@ -1,8 +1,9 @@
 """Shared infrastructure for every tool in the toolkit.
 
 Nothing tool-specific belongs here -- this is the stuff that would have to be
-duplicated if the toolkit were split into separate addons. Right now that means
-the self-updater and the addon preferences it stores its state in.
+duplicated if the toolkit were split into separate addons. Right now that is
+the diagnostics report. (The self-updater lived here until v1.1.0; installs
+and updates now come through IFTK, the team's tool manager.)
 
 `classes` is built at import time, so the top-level reload guard must reload
 this package's submodules BEFORE reloading this package. Otherwise the tuple
@@ -11,17 +12,5 @@ previous build's classes.
 """
 
 from . import diagnostics
-from . import updater
 
-# Preferences first: the panels read prefs while drawing, and several operators
-# look them up on invoke.
-classes = (
-    updater.LightgroupToolsPreferences,
-    updater.LIGHTGROUP_OT_check_updates,
-    updater.LIGHTGROUP_OT_download_update,
-    updater.LIGHTGROUP_OT_restore_backup,
-    updater.LIGHTGROUP_OT_dismiss_install_notice,
-    updater.LIGHTGROUP_OT_update_dialog,
-    updater.LIGHTGROUP_OT_restart_dialog,
-    updater.LIGHTGROUP_OT_close_dialog,
-) + diagnostics.classes
+classes = diagnostics.classes

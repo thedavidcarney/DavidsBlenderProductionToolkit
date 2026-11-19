@@ -16,11 +16,12 @@ so this test drives the paths that produce it:
 
   1. cold enable       -- fresh Blender, addon_enable
   2. in-session reload -- disable, evict sys.modules, refresh, enable
-                          (what updater.install_update_on_load does)
+                          (what the old self-updater did; still the cleanest
+                          way to prove nothing hides in a stale module)
   3. re-exec over live -- importlib.reload of the top module, then
                           register() again (what Blender's Install from Disk
                           does, and the reason the reload guard exists)
-  4. teardown          -- clean unregister, no leaked load_post handler
+  4. teardown          -- clean unregister, no leaked handler
   5. import hygiene    -- static scan for relative imports hidden inside
                           function bodies, which move silently and only fail
                           when a user clicks the button that runs them
@@ -28,9 +29,10 @@ so this test drives the paths that produce it:
                           take Lightgroups down with it
   7. diagnostics       -- the support button writes exactly one file, inside
                           the config dir, and never dirties the open .blend
-  8. panel draw        -- the Lightgroups tab draws in every update state,
-                          including the one that only exists after a release
-                          is published
+  8. panel draw        -- the Lightgroups tab draws, every button resolves
+  9. no updater        -- since v1.1.0 IFTK installs and updates the addon,
+                          so nothing in it may touch the network, start a
+                          thread, or register an update handler
 
 After phases 1-3, every class, operator, panel and preference property that
 shipped in the production-tested v1.0.15 build must still resolve.
@@ -38,10 +40,8 @@ shipped in the production-tested v1.0.15 build must still resolve.
 The EXPECTED_* lists below are the contract. If a restructure legitimately
 renames something, edit the list deliberately -- don't let it drift quietly.
 
-Network safety: enabling the addon installs a load_post handler that can
-fire an auto-update check against GitHub. Every enable here is followed by
-pinning updater._auto_check_done_this_session = True, so a test run never
-hits the network and never stages an update.
+Network safety: nothing left in the addon can reach the network, and phase 9
+keeps it that way.
 """
 
 import atexit
@@ -60,37 +60,20 @@ EXPECTED_OPERATORS = (
     "lightgroup.create_for_each_light",
     "lightgroup.denoise_all_cycles",
     "lightgroup.assign_to_lightgroup",
-    "lightgroup.check_updates",
-    "lightgroup.download_update",
-    "lightgroup.restore_backup",
-    "lightgroup.dismiss_install_notice",
-    "lightgroup.update_dialog",
-    "lightgroup.restart_dialog",
-    "lightgroup.close_dialog",
     "lightgroup.write_diagnostics",
     "camoverlay.match_resolution",
     "lightgroup.solo_light",
 )
 
-# NB: two registered classes are deliberately absent from this list because
-# neither appears in bpy.types under its class name:
-#   LightgroupToolsPreferences -- an AddonPreferences registers under its
-#     bl_idname (the module name) instead.
-#   CameraOverlaySettings -- a PropertyGroup is reached
-#     through the ID property it is attached to.
-# All are verified functionally in assert_fully_registered() instead.
+# NB: CameraOverlaySettings is deliberately absent from this list: a
+# PropertyGroup doesn't appear in bpy.types under its class name, it is reached
+# through the ID property it is attached to. It is verified functionally in
+# assert_fully_registered() instead.
 EXPECTED_CLASSES = (
     "LIGHTGROUP_OT_clear_all_lightgroups",
     "LIGHTGROUP_OT_create_for_each_light",
     "LIGHTGROUP_OT_denoise_all_cycles",
     "LIGHTGROUP_OT_assign_to_lightgroup",
-    "LIGHTGROUP_OT_check_updates",
-    "LIGHTGROUP_OT_download_update",
-    "LIGHTGROUP_OT_restore_backup",
-    "LIGHTGROUP_OT_dismiss_install_notice",
-    "LIGHTGROUP_OT_update_dialog",
-    "LIGHTGROUP_OT_restart_dialog",
-    "LIGHTGROUP_OT_close_dialog",
     "LIGHTGROUP_PT_main_panel",
     "LIGHTGROUP_PT_compositor_panel",
     "LIGHTGROUP_PT_viewlayer_panel",
@@ -119,20 +102,15 @@ EXPECTED_PANELS = {
     "CAMOVERLAY_PT_support_panel": ("VIEW_3D", "Camera Overlay"),
 }
 
-EXPECTED_PREF_PROPS = (
-    "update_available",
-    "latest_version",
-    "download_url",
-    "latest_notes",
-    "latest_is_prerelease",
-    "update_downloaded",
-    "staged_update_path",
-    "staged_update_version",
-    "backup_available",
-    "backup_version",
-    "update_just_installed",
-    "last_installed_version",
-    "last_auto_check",
+# Operators the self-updater registered up to v1.0.21. None may come back.
+REMOVED_OPERATORS = (
+    "lightgroup.check_updates",
+    "lightgroup.download_update",
+    "lightgroup.restore_backup",
+    "lightgroup.dismiss_install_notice",
+    "lightgroup.update_dialog",
+    "lightgroup.restart_dialog",
+    "lightgroup.close_dialog",
 )
 
 # --- Tiny assertion harness -------------------------------------------------
@@ -162,26 +140,26 @@ def check(condition, message):
     return bool(condition)
 
 
-def find_updater_module():
-    """Locate the updater by what it DOES, not where it lives.
-
-    It moved from lightgroup_tools.updater to lightgroup_tools.core.updater in
-    the restructure and could move again, so match on the handler function
-    instead of hardcoding a dotted path.
-    """
-    for name, module in list(sys.modules.items()):
-        if name != ADDON and not name.startswith(ADDON + "."):
+def addon_handlers():
+    """Every app handler owned by the addon, as (list name, dotted function)."""
+    found = []
+    for list_name in dir(bpy.app.handlers):
+        handlers = getattr(bpy.app.handlers, list_name)
+        if not isinstance(handlers, list):
             continue
-        if module is not None and hasattr(module, "install_update_on_load"):
-            return module
-    return None
+        for h in handlers:
+            module = getattr(h, "__module__", "") or ""
+            if module == ADDON or module.startswith(ADDON + "."):
+                found.append((list_name, module + "." + getattr(h, "__name__", "?")))
+    return found
 
 
-def silence_auto_check():
-    """Stop the load_post handler from phoning GitHub during a test run."""
-    updater = find_updater_module()
-    if updater is not None:
-        updater._auto_check_done_this_session = True
+# The only handlers the addon may own: Solo Light, the output check and Camera
+# Overlay's load_post. An update handler (install-on-load, auto-check) must not
+# come back.
+ALLOWED_HANDLER_MODULES = (ADDON + ".lightgroups.solo",
+                           ADDON + ".lightgroups.output_check",
+                           ADDON + ".camera_overlay")
 
 
 SOLO_HANDLER_LISTS = ("depsgraph_update_post", "render_pre", "render_post",
@@ -247,34 +225,23 @@ def assert_fully_registered(phase):
                   "[" + phase + "] " + panel + ".bl_category is "
                   + repr(actual) + ", expected " + repr(tab))
 
-    prefs_entry = bpy.context.preferences.addons.get(ADDON)
-    if check(prefs_entry is not None,
-             "[" + phase + "] addon '" + ADDON + "' not in context.preferences.addons"):
-        prefs = prefs_entry.preferences
-        if check(prefs is not None, "[" + phase + "] preferences object is None"):
-            for prop in EXPECTED_PREF_PROPS:
-                check(hasattr(prefs, prop),
-                      "[" + phase + "] preference property '" + prop + "' missing")
+    check(bpy.context.preferences.addons.get(ADDON) is not None,
+          "[" + phase + "] addon '" + ADDON + "' not in context.preferences.addons")
 
-            # Reached through the live prefs object rather than by importing it
-            # from a known module, so this keeps working after the preferences
-            # class moves into core/ during the restructure.
-            prefs_cls = type(prefs)
-            check(prefs_cls.is_registered,
-                  "[" + phase + "] preferences class " + prefs_cls.__name__
-                  + " reports is_registered False")
-            check(prefs_cls.bl_idname == ADDON,
-                  "[" + phase + "] preferences bl_idname is "
-                  + repr(prefs_cls.bl_idname) + ", expected " + repr(ADDON)
-                  + " (prefs bind to the addon by module name -- a mismatch"
-                  + " silently orphans every saved preference)")
-
-    # The updater's load_post handler is what installs staged updates and runs
-    # the auto-check. Losing it in a restructure would silently kill both.
-    updater = find_updater_module()
-    if check(updater is not None, "[" + phase + "] updater module not found in sys.modules"):
-        check(updater.install_update_on_load in bpy.app.handlers.load_post,
-              "[" + phase + "] install_update_on_load not registered on load_post")
+    # No updater: its operators are gone, and no handler outside the known
+    # tools is registered.
+    for idname in REMOVED_OPERATORS:
+        category, _, name = idname.partition(".")
+        try:
+            getattr(getattr(bpy.ops, category), name).get_rna_type()
+            FAILURES.append("[" + phase + "] updater operator " + idname
+                            + " is registered again")
+        except (KeyError, RuntimeError, AttributeError):
+            pass
+    for list_name, func in addon_handlers():
+        check(func.rpartition(".")[0] in ALLOWED_HANDLER_MODULES,
+              "[" + phase + "] unexpected " + list_name + " handler " + func
+              + " -- the addon must not install update handlers")
 
     scene = getattr(bpy.context, "scene", None)
 
@@ -333,13 +300,12 @@ def assert_fully_registered(phase):
 print("\n=== phase 1: cold enable (" + bpy.app.version_string + ") ===")
 try:
     bpy.ops.preferences.addon_enable(module=ADDON)
-    silence_auto_check()
     assert_fully_registered("cold enable")
 except Exception as exc:  # noqa: BLE001 - a raise here IS the test result
     FAILURES.append("[cold enable] raised " + type(exc).__name__ + ": " + str(exc))
 
 
-# --- Phase 2: in-session reload (the updater's own path) --------------------
+# --- Phase 2: in-session reload (sys.modules eviction) ---------------------
 
 print("=== phase 2: in-session reload (sys.modules eviction) ===")
 try:
@@ -352,7 +318,6 @@ try:
 
     bpy.ops.preferences.addon_refresh()
     bpy.ops.preferences.addon_enable(module=ADDON)
-    silence_auto_check()
     assert_fully_registered("in-session reload")
 except Exception as exc:  # noqa: BLE001
     FAILURES.append("[in-session reload] raised " + type(exc).__name__ + ": " + str(exc))
@@ -377,7 +342,6 @@ try:
               "[reload guard] classes entry is not a class: " + repr(cls))
 
     module.register()
-    silence_auto_check()
     assert_fully_registered("reload guard")
 except Exception as exc:  # noqa: BLE001
     FAILURES.append("[reload guard] raised " + type(exc).__name__ + ": " + str(exc))
@@ -387,11 +351,10 @@ except Exception as exc:  # noqa: BLE001
 
 print("=== phase 4: clean unregister ===")
 try:
-    updater = find_updater_module()
     bpy.ops.preferences.addon_disable(module=ADDON)
-    if updater is not None:
-        check(updater.install_update_on_load not in bpy.app.handlers.load_post,
-              "[teardown] load_post handler survived addon_disable (handler leak)")
+    check(not addon_handlers(),
+          "[teardown] handler(s) survived addon_disable: "
+          + str(addon_handlers()))
     for cls_name in EXPECTED_CLASSES:
         check(not hasattr(bpy.types, cls_name),
               "[teardown] bpy.types." + cls_name + " still registered after disable")
@@ -412,7 +375,7 @@ try:
 
     # A leaked draw handler keeps drawing against unregistered properties,
     # which is a crash rather than a cosmetic bug. The overlay module also
-    # owns its own load_post handler, separate from the updater's.
+    # owns its own load_post handler.
     overlay_module = sys.modules.get(ADDON + ".camera_overlay.overlay")
     if check(overlay_module is not None,
              "[teardown] camera_overlay.overlay not found in sys.modules"):
@@ -429,9 +392,9 @@ except Exception as exc:  # noqa: BLE001
 # --- Phase 5: relative imports must sit at module scope ---------------------
 #
 # The restructure turned up a `from . import bl_info` buried inside an
-# operator's execute(). Moving updater.py into core/ silently repointed it at
-# the wrong package, and because it only runs when a user clicks "Check for
-# Updates", nothing above would have caught it -- import succeeds, registration
+# operator's execute(). Moving its module into core/ silently repointed it at
+# the wrong package, and because it only ran when a user clicked the button,
+# nothing above would have caught it -- import succeeds, registration
 # succeeds, the button breaks in production.
 #
 # Rather than test for that one instance, forbid the shape: a relative import
@@ -557,7 +520,7 @@ except Exception as exc:  # noqa: BLE001
 #
 # This runs on other people's machines, mid-season, while they have real jobs
 # open. The button is allowed to write exactly ONE file, under Blender's own
-# config directory, beside the updater's staging and backup dirs. It must not
+# config directory. It must not
 # write near a .blend, a render output, or anything else the artist owns, and
 # it must not modify the open file.
 
@@ -573,8 +536,7 @@ try:
                         " refusing to write a report into the real config dir")
     else:
         bpy.ops.preferences.addon_enable(module=ADDON)
-        silence_auto_check()
-
+    
         diagnostics = sys.modules.get(ADDON + ".core.diagnostics")
         if check(diagnostics is not None,
                  "[diagnostics] core.diagnostics not in sys.modules"):
@@ -666,8 +628,7 @@ try:
                   "nothing deleted, .blend untouched")
 
         # And statically: the diagnostics and camera overlay code must not
-        # contain a delete call at all. The updater legitimately removes its
-        # own staging and backup dirs, so it is exempt -- these are not.
+        # contain a delete call at all.
         import ast
 
         destructive = {"remove", "unlink", "rmtree", "rmdir", "removedirs"}
@@ -705,22 +666,17 @@ except Exception as exc:  # noqa: BLE001
     FAILURES.append("[diagnostics] raised " + type(exc).__name__ + ": " + str(exc))
 
 
-# --- Phase 8: the Lightgroups tab must draw in every update state ---------
+# --- Phase 8: the Lightgroups tab must draw ---------------------------------
 #
-# This is the tab the team uses on every job, and its draw path branches on
-# preference state that is FALSE on every machine right now. The
-# `update_available` branch only comes alive the moment a release is
-# published -- so a mistake in it would be invisible in testing and would
-# break everyone's panel simultaneously, mid-season, the instant they check
-# for updates. Drive every branch deliberately.
+# The tab the team uses on every job. Draw it through the real code with a
+# recording layout, and check every button it references resolves -- a typo'd
+# idname draws a red box in Blender rather than raising.
 
-print("=== phase 8: Lightgroups panel draws in every update state ===")
+print("=== phase 8: Lightgroups panel draws ===")
 
 try:
     bpy.ops.preferences.addon_enable(module=ADDON)
-    silence_auto_check()
     panels = sys.modules[ADDON + ".lightgroups.panels"]
-    prefs = bpy.context.preferences.addons[ADDON].preferences
 
     class FakeLayout:
         """Records what the real draw code emits, without a UI."""
@@ -753,74 +709,82 @@ try:
         def prop(self, *args, **kwargs):
             self.sink.append(("prop", args[1] if len(args) > 1 else "?"))
 
-    # Every button the team relies on, in every state below.
     ESSENTIAL = ("lightgroup.clear_all_lightgroups",
                  "lightgroup.create_for_each_light",
                  "lightgroup.assign_to_lightgroup",
                  "lightgroup.denoise_all_cycles",
-                 "lightgroup.check_updates")
+                 "lightgroup.write_diagnostics")
 
-    STATES = (
-        ("clean install", dict(update_available=False, update_downloaded=False,
-                               backup_available=False,
-                               update_just_installed=False)),
-        # What every machine looks like the moment we publish.
-        ("update available", dict(update_available=True, latest_version="1.0.18",
-                                  latest_notes="Camera Overlay tab. "
-                                               "Diagnostics button.",
-                                  latest_is_prerelease=True)),
-        ("update available, stable", dict(update_available=True,
-                                          latest_is_prerelease=False)),
-        ("update available, empty notes", dict(update_available=True,
-                                               latest_notes="")),
-        ("downloaded, awaiting restart", dict(update_available=False,
-                                              update_downloaded=True)),
-        ("backup present", dict(update_downloaded=False, backup_available=True,
-                                backup_version="1.0.17")),
-        ("just installed banner", dict(update_just_installed=True,
-                                       last_installed_version="1.0.18")),
-    )
-
-    for label, state in STATES:
-        for field, value in state.items():
-            setattr(prefs, field, value)
-        sink = []
+    sink = []
+    panels._draw_tools(FakeLayout(sink), bpy.context)
+    drawn = [name for kind, name in sink if kind == "operator"]
+    for idname in ESSENTIAL:
+        check(idname in drawn,
+              "[panel] '" + idname + "' missing from the Lightgroups tab")
+    for idname in set(drawn):
+        category, _, name = idname.partition(".")
         try:
-            panels._draw_tools(FakeLayout(sink), bpy.context)
-        except Exception as exc:
-            FAILURES.append("[panel] Lightgroups tab RAISED while drawing in "
-                            "state '" + label + "': " + type(exc).__name__
-                            + ": " + str(exc))
-            continue
-
-        drawn = [name for kind, name in sink if kind == "operator"]
-        for idname in ESSENTIAL:
-            check(idname in drawn,
-                  "[panel] '" + idname + "' missing from the Lightgroups tab "
-                  "in state '" + label + "'")
-
-        # A typo'd idname draws a red box in Blender rather than raising, so
-        # every button the panel references has to resolve for real.
-        for idname in set(drawn):
-            category, _, name = idname.partition(".")
-            try:
-                getattr(getattr(bpy.ops, category), name).get_rna_type()
-            except Exception:
-                FAILURES.append("[panel] Lightgroups tab draws a button for '"
-                                + idname + "' but that operator is not "
-                                "registered (state '" + label + "')")
-
-    # Reset so nothing leaks into a later phase or the user's prefs.
-    for field in ("update_available", "update_downloaded", "backup_available",
-                  "update_just_installed", "latest_is_prerelease"):
-        setattr(prefs, field, False)
-    for field in ("latest_version", "latest_notes", "backup_version",
-                  "last_installed_version"):
-        setattr(prefs, field, "")
-
-    print("    drew cleanly in " + str(len(STATES)) + " update states")
+            getattr(getattr(bpy.ops, category), name).get_rna_type()
+        except Exception:
+            FAILURES.append("[panel] Lightgroups tab draws a button for '"
+                            + idname + "' but that operator is not registered")
+    for kind, text in sink:
+        check(kind != "label" or "update" not in text.lower(),
+              "[panel] the Lightgroups tab still talks about updates: "
+              + repr(text))
+    print("    drew cleanly, " + str(len(set(drawn))) + " buttons resolve")
+    bpy.ops.preferences.addon_disable(module=ADDON)
 except Exception as exc:  # noqa: BLE001
     FAILURES.append("[panel] raised " + type(exc).__name__ + ": " + str(exc))
+
+
+# --- Phase 9: no updater, statically ----------------------------------------
+#
+# From v1.1.0 IFTK installs and updates the addon. The addon itself must make
+# no network calls, start no threads, and write no staging or backup folders.
+# Checked on the source by AST, so comments explaining the rule don't trip it.
+
+print("=== phase 9: no network, threads or update folders in the source ===")
+
+try:
+    import ast
+
+    FORBIDDEN_IMPORTS = {"urllib", "http", "socket", "ssl", "requests",
+                         "threading", "_thread", "concurrent", "asyncio",
+                         "subprocess"}
+    FORBIDDEN_STRINGS = ("api.github.com", "zipball", "lightgroup_tools_update",
+                         "lightgroup_tools_backup", "releases/latest")
+    package_root = os.path.dirname(sys.modules[ADDON].__file__)
+    scanned = 0
+    for dirpath, _dirnames, filenames in os.walk(package_root):
+        if "__pycache__" in dirpath:
+            continue
+        for filename in sorted(filenames):
+            if not filename.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, filename)
+            relative = os.path.relpath(path, package_root)
+            with open(path, "r", encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=path)
+            scanned += 1
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    names = [node.module or ""]
+                for name in names:
+                    check(name.partition(".")[0] not in FORBIDDEN_IMPORTS,
+                          "[no updater] " + relative + ":" + str(node.lineno)
+                          + " imports " + name)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    for needle in FORBIDDEN_STRINGS:
+                        check(needle not in node.value,
+                              "[no updater] " + relative + ":"
+                              + str(node.lineno) + " mentions " + repr(needle))
+    print("    scanned " + str(scanned) + " module(s)")
+except Exception as exc:  # noqa: BLE001
+    FAILURES.append("[no updater] raised " + type(exc).__name__ + ": " + str(exc))
 
 
 _VERDICT_REACHED.append(True)
@@ -836,6 +800,6 @@ if FAILURES:
 
 print("REGISTRATION TEST: PASSED")
 print("  " + str(len(EXPECTED_CLASSES)) + " classes, "
-      + str(len(EXPECTED_OPERATORS)) + " operators, "
-      + str(len(EXPECTED_PREF_PROPS)) + " prefs verified across 8 phases")
+      + str(len(EXPECTED_OPERATORS)) + ""
+      + " operators verified across 9 phases")
 print("=" * 60)

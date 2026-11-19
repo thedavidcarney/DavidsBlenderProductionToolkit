@@ -62,11 +62,6 @@ def close(a, b, tolerance, message):
 
 bpy.ops.preferences.addon_enable(module=ADDON)
 
-# Stop the updater's load_post handler from phoning GitHub.
-for name, module in list(sys.modules.items()):
-    if module is not None and hasattr(module, "install_update_on_load"):
-        module._auto_check_done_this_session = True
-
 overlay = sys.modules[ADDON + ".camera_overlay.overlay"]
 
 scene = bpy.context.scene

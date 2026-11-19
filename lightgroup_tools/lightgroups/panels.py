@@ -9,20 +9,10 @@ import bpy
 
 # Module scope, never inside a function: a relative import in a function body
 # only resolves when that code path runs, so moving this module would break
-# the update panel silently and only for whoever clicked the button.
-from ..core import updater
+# a panel silently and only for whoever clicked the button.
 from . import solo
 from . import output_check
 
-
-def _get_prefs(context):
-    """Fetch addon preferences, or None if the addon isn't registered under the expected name."""
-    # partition on the first dot, so this yields the top-level package name no
-    # matter how deep in the package tree this module lives.
-    addon_name = __name__.partition('.')[0]
-    if addon_name in context.preferences.addons:
-        return context.preferences.addons[addon_name].preferences
-    return None
 
 
 def _draw_tools(layout, context):
@@ -31,8 +21,6 @@ def _draw_tools(layout, context):
     Shared by every panel so the 3D View and Compositor sidebars can't drift
     apart the way they did previously (the compositor was missing two buttons).
     """
-    prefs = _get_prefs(context)
-
     layout.label(text="Setup:")
     layout.operator("lightgroup.clear_all_lightgroups", icon='X', text="Clear All Lightgroups")
     layout.operator("lightgroup.create_for_each_light", icon='LIGHT', text="Create Lightgroups for Each Light")
@@ -47,46 +35,6 @@ def _draw_tools(layout, context):
     layout.label(text="Compositor:")
     layout.operator("lightgroup.denoise_all_cycles", icon='NODE_COMPOSITING')
     output_check.draw_status(layout, context)
-
-    layout.separator()
-
-    # Update section
-    layout.label(text="Updates:")
-    # v1.0.21 is the last self-updating build; the team installs through IFTK
-    # from here on. Shown always, so someone who skipped the popup still sees it.
-    layout.label(text="Future updates come through IFTK", icon='INFO')
-
-    if prefs:
-        # Sticky restart-required notice from a recent in-session install
-        if prefs.update_just_installed:
-            box = layout.box()
-            version_label = f"Update v{prefs.last_installed_version} installed" if prefs.last_installed_version else "Update installed"
-            box.label(text=version_label, icon='CHECKMARK')
-            box.label(text="Restart Blender for full effect", icon='INFO')
-            box.operator("lightgroup.dismiss_install_notice", icon='X')
-
-    row = layout.row()
-    row.operator("lightgroup.check_updates", icon='FILE_REFRESH')
-
-    # Show update available message and download button
-    if prefs:
-        if prefs.update_downloaded:
-            box = layout.box()
-            box.label(text="Update ready!", icon='CHECKMARK')
-            box.label(text="Restart Blender to install", icon='INFO')
-        elif prefs.update_available:
-            box = layout.box()
-            box.label(text=f"Update available: v{prefs.latest_version}", icon='INFO')
-            # Same helper the popup uses, so what's new and the experimental
-            # warning can't say different things in the two places.
-            updater.draw_release_info(box, prefs)
-            box.operator("lightgroup.download_update", icon='IMPORT')
-
-        # Rollback to the backup of the previous version
-        if prefs.backup_available:
-            row = layout.row()
-            restore_text = f"Restore Previous Version (v{prefs.backup_version})" if prefs.backup_version else "Restore Previous Version"
-            row.operator("lightgroup.restore_backup", icon='RECOVER_LAST', text=restore_text)
 
     layout.separator()
 

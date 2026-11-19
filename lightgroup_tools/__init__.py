@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Lightgroup Tools",
     "author": "David Carney",
-    "version": (1, 0, 21),
+    "version": (1, 1, 0),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Lightgroups",
     "description": "Tools for managing lightgroups and compositor setup",
@@ -12,7 +12,7 @@ import bpy
 
 # --- Package layout ---------------------------------------------------------
 #
-#   core/            shared infrastructure (updater, preferences)
+#   core/            shared infrastructure (diagnostics)
 #   lightgroups/     the Lightgroups tab
 #   camera_overlay/  the Camera Overlay tab
 #
@@ -36,13 +36,12 @@ import bpy
 # the exact bug the guard exists to prevent, just moved one level up.
 #
 # importlib.reload mutates modules in place and returns the same object, so
-# every existing reference (including `core.updater`, and the package attributes
+# every existing reference (including `core.diagnostics`, and the package attributes
 # themselves) sees the new code once this block has run.
 if "core" in locals():
     import importlib
 
     importlib.reload(core.diagnostics)
-    importlib.reload(core.updater)
     importlib.reload(lightgroups.operators)
     importlib.reload(lightgroups.solo)
     importlib.reload(lightgroups.output_check)
@@ -62,8 +61,7 @@ else:
     from . import camera_overlay
 
 
-# Registration order across the toolkit. Preferences land first (via core), and
-# panels last, matching what shipped in v1.0.15.
+# Registration order across the toolkit: core first, panels last.
 classes = core.classes + lightgroups.classes + camera_overlay.classes
 
 
@@ -97,7 +95,6 @@ def _guarded(action, tool_name, func):
 
 
 def register():
-    core.updater.register_handlers()
     for cls in classes:
         bpy.utils.register_class(cls)
     lightgroups.register_properties()
@@ -115,7 +112,6 @@ def unregister():
     lightgroups.unregister_properties()
     for cls in classes:
         bpy.utils.unregister_class(cls)
-    core.updater.unregister_handlers()
 
 
 if __name__ == "__main__":

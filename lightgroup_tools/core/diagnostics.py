@@ -65,7 +65,7 @@ def _safe(label, func, default="unavailable"):
 
 
 def _report_dir():
-    """Beside the updater's staging and backup dirs, for consistency."""
+    """Under the config dir, never near a .blend or a render."""
     return os.path.join(bpy.utils.user_resource('CONFIG'),
                         "lightgroup_tools_diagnostics")
 
@@ -151,23 +151,6 @@ def _scene_lines(context):
     return lines
 
 
-def _preferences_lines():
-    addon_name = __name__.partition('.')[0]
-    entry = bpy.context.preferences.addons.get(addon_name)
-    if entry is None or entry.preferences is None:
-        return ["  <no preferences registered>"]
-    prefs = entry.preferences
-    # Deliberately a fixed list: update state only, nothing else.
-    lines = []
-    for field in ("update_available", "latest_version", "update_downloaded",
-                  "staged_update_version", "backup_available",
-                  "backup_version", "update_just_installed",
-                  "last_installed_version"):
-        lines.append("  %-22s %s" % (field + ":",
-                                     getattr(prefs, field, "<absent>")))
-    return lines
-
-
 def build_report(context):
     """The whole report as a list of lines. Never raises."""
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -195,8 +178,7 @@ def build_report(context):
     lines.extend(gpu_lines if isinstance(gpu_lines, list)
                  else ["  unavailable (%s)" % gpu_lines])
 
-    for title, builder in (("REGISTRATION", _registration_lines),
-                           ("PREFERENCES (update state)", _preferences_lines)):
+    for title, builder in (("REGISTRATION", _registration_lines),):
         lines.extend(["", title])
         produced = _safe(title, builder, default=None)
         lines.extend(produced if isinstance(produced, list)

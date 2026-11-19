@@ -10,3 +10,6 @@ __pycache__/
 # asset kept locally for spiral testing; the suite uses a synthetic stand-in so
 # it stays self-contained.
 tests/*.blend
+
+# Local IFTK build zips (Noah publishes them; not tracked here).
+dist/
